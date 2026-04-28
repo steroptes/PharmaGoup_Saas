@@ -19,6 +19,22 @@ MVP React + Supabase pour le groupage de bons de livraison pharmaceutiques.
    npm run dev
    ```
 
+## Variables d'environnement Auth requises
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+## Authentification (nouveau)
+Le frontend inclut désormais un module d'authentification complet basé sur Supabase:
+- `/auth/login`: connexion email + mot de passe.
+- Redirection automatique selon rôle:
+  - `admin` -> `/admin/campaigns`
+  - `pharmacy_user` -> `/pharmacy/upload`
+- `/auth/verify-email`: renvoi du lien de vérification d'email.
+- `/auth/forgot-password`: demande de récupération de mot de passe.
+- `/auth/reset-password`: mise à jour du mot de passe depuis lien de récupération.
+- `/auth/register/pharmacy`: création de compte pharmacie.
+- `/auth/register/admin`: création de compte administrateur.
+
 ## Livraison MVP (phases)
 - Phase 1: Auth, rôles, schéma SQL, RLS, référentiels.
 - Phase 2: campagnes, participants, produits ciblés.
@@ -38,3 +54,4 @@ MVP React + Supabase pour le groupage de bons de livraison pharmaceutiques.
 ## SQL Supabase
 Le schéma complet + politiques RLS sont dans:
 - `supabase/migrations/20260428090000_init.sql`
+- `supabase/migrations/20260428152000_auth_signup_bootstrap.sql`
