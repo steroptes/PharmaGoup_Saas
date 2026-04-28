@@ -36,7 +36,7 @@ Le frontend inclut désormais un module d'authentification complet basé sur Sup
   - `pharmacy_user` -> `/pharmacy/upload`
 - `/auth/verify-email`: renvoi du lien de vérification d'email.
 - `/auth/forgot-password`: demande de récupération de mot de passe.
-- `/auth/reset-password`: mise à jour du mot de passe depuis lien de récupération.
+- `/auth/reset-password`: mise à jour du mot de passe depuis lien de récupération (même si une session est déjà active, le flux de recovery reste prioritaire).
 - `/auth/register/pharmacy`: création de compte pharmacie.
 - `/auth/register/admin`: création de compte administrateur.
 
