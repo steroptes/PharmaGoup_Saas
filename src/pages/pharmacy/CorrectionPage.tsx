@@ -9,6 +9,9 @@ import {
   type SupplierOption,
 } from '@/services/deliveryNotes';
 import type { DeliveryNoteLineInput, ExtractedDeliveryNote } from '@/types/domain';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input, Select } from '@/components/ui/input';
 
 const EMPTY_LINE: DeliveryNoteLineInput = {
   product_code: '',
@@ -37,7 +40,7 @@ export const CorrectionPage = () => {
 
   const locationState = location.state as { extracted?: ExtractedDeliveryNote; file?: File } | null;
 
-  const [file, setFile] = useState<File | null>(locationState?.file ?? null);
+  const file = locationState?.file ?? null;
   const [header, setHeader] = useState<ExtractedDeliveryNote>(buildDefaultHeader(locationState?.extracted));
   const [lines, setLines] = useState<DeliveryNoteLineInput[]>(
     locationState?.extracted?.lines?.length ? locationState.extracted.lines : [{ ...EMPTY_LINE }],
@@ -162,20 +165,19 @@ export const CorrectionPage = () => {
 
   return (
     <div className="grid">
-      <section className="card">
+      <Card>
         <h1>Correction post-OCR</h1>
         <p>Corrigez l'entête et les lignes détectées, puis validez l'enregistrement en base.</p>
-      </section>
+      </Card>
 
       {feedback && <section className="alert">{feedback}</section>}
 
-      <section className="card grid">
+      <Card className="grid">
         <h2>Entête BL</h2>
         <div className="grid-2">
           <label>
             N° BL
-            <input
-              className="input"
+            <Input
               value={header.blNumber ?? ''}
               onChange={(e) => setHeader((prev) => ({ ...prev, blNumber: e.target.value }))}
             />
@@ -183,8 +185,7 @@ export const CorrectionPage = () => {
 
           <label>
             Date BL
-            <input
-              className="input"
+            <Input
               type="date"
               value={header.blDate ?? ''}
               onChange={(e) => setHeader((prev) => ({ ...prev, blDate: e.target.value }))}
@@ -193,8 +194,7 @@ export const CorrectionPage = () => {
 
           <label>
             Fournisseur OCR
-            <input
-              className="input"
+            <Input
               value={header.supplierName ?? ''}
               onChange={(e) => setHeader((prev) => ({ ...prev, supplierName: e.target.value }))}
             />
@@ -202,8 +202,7 @@ export const CorrectionPage = () => {
 
           <label>
             Fournisseur (base)
-            <select
-              className="select"
+            <Select
               value={selectedSupplierId}
               onChange={(e) => setSelectedSupplierId(e.target.value)}
             >
@@ -211,13 +210,12 @@ export const CorrectionPage = () => {
               {suppliers.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label>
             Campagne ouverte
-            <select
-              className="select"
+            <Select
               value={selectedCampaignId}
               onChange={(e) => setSelectedCampaignId(e.target.value)}
             >
@@ -225,25 +223,24 @@ export const CorrectionPage = () => {
               {campaigns.map((campaign) => (
                 <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label>
             Total HT
-            <input
-              className="input"
+            <Input
               type="number"
               value={header.totalHT ?? 0}
               onChange={(e) => setHeader((prev) => ({ ...prev, totalHT: Number(e.target.value || 0) }))}
             />
           </label>
         </div>
-      </section>
+      </Card>
 
-      <section className="card">
+      <Card>
         <div className="toolbar">
           <h2>Lignes produits</h2>
-          <button className="btn secondary" onClick={addLine}>Ajouter ligne</button>
+          <Button variant="secondary" type="button" onClick={addLine}>Ajouter ligne</Button>
         </div>
 
         <table className="table">
@@ -260,12 +257,12 @@ export const CorrectionPage = () => {
           <tbody>
             {lines.map((line, index) => (
               <tr key={index}>
-                <td><input className="input" value={line.product_code} onChange={(e) => updateLine(index, 'product_code', e.target.value)} /></td>
-                <td><input className="input" value={line.designation} onChange={(e) => updateLine(index, 'designation', e.target.value)} /></td>
-                <td><input className="input" type="number" min="0" step="0.01" value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} /></td>
-                <td><input className="input" type="number" min="0" step="0.01" value={line.p_phar} onChange={(e) => updateLine(index, 'p_phar', e.target.value)} /></td>
+                <td><Input value={line.product_code} onChange={(e) => updateLine(index, 'product_code', e.target.value)} /></td>
+                <td><Input value={line.designation} onChange={(e) => updateLine(index, 'designation', e.target.value)} /></td>
+                <td><Input type="number" min="0" step="0.01" value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} /></td>
+                <td><Input type="number" min="0" step="0.01" value={line.p_phar} onChange={(e) => updateLine(index, 'p_phar', e.target.value)} /></td>
                 <td>{line.subtotal.toFixed(2)}</td>
-                <td><button className="btn" onClick={() => removeLine(index)}>Supprimer</button></td>
+                <td><Button variant="danger" type="button" onClick={() => removeLine(index)}>Supprimer</Button></td>
               </tr>
             ))}
           </tbody>
@@ -273,10 +270,10 @@ export const CorrectionPage = () => {
 
         <p><b>Total HT lignes:</b> {totalLines.toFixed(2)}</p>
         <div className="actions">
-          <button className="btn secondary" onClick={() => navigate('/pharmacy/upload')}>Revenir au téléversement</button>
-          <button className="btn" onClick={submit} disabled={saving}>{saving ? 'Enregistrement...' : 'Valider et enregistrer le BL'}</button>
+          <Button variant="secondary" type="button" onClick={() => navigate('/pharmacy/upload')}>Revenir au téléversement</Button>
+          <Button type="button" onClick={submit} disabled={saving}>{saving ? 'Enregistrement...' : 'Valider et enregistrer le BL'}</Button>
         </div>
-      </section>
+      </Card>
     </div>
   );
 };

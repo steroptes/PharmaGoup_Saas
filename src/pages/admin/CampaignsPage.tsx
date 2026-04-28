@@ -1,18 +1,22 @@
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input, Select } from '@/components/ui/input';
+
 export const CampaignsPage = () => (
   <div className="grid">
-    <section className="card">
+    <Card>
       <h1>Campagnes de collecte</h1>
       <p>Créer, ouvrir, clôturer et filtrer le périmètre pharmacies/produits.</p>
-    </section>
-    <section className="card">
+    </Card>
+    <Card>
       <h2>Création rapide</h2>
       <div className="grid grid-2">
-        <input className="input" placeholder="Nom campagne" />
-        <input className="input" type="date" />
-        <input className="input" type="date" />
-        <select className="select"><option>Fournisseur</option></select>
+        <Input placeholder="Nom campagne" />
+        <Input type="date" />
+        <Input type="date" />
+        <Select><option>Fournisseur</option></Select>
       </div>
-      <button className="btn" style={{ marginTop: 12 }}>Créer en brouillon</button>
-    </section>
+      <Button style={{ marginTop: 12 }}>Créer en brouillon</Button>
+    </Card>
   </div>
 );

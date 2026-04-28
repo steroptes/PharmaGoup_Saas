@@ -1,6 +1,8 @@
 import { Link, Outlet } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 export const AppShell = () => {
   const user = useCurrentUser();
@@ -14,9 +16,11 @@ export const AppShell = () => {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <h2>PharmaGroup</h2>
-        <p>{user.full_name}</p>
-        <p className="badge">{user.role}</p>
+        <div className="grid">
+          <h2>PharmaGroup</h2>
+          <p>{user.full_name}</p>
+          <Badge>{user.role}</Badge>
+        </div>
         <nav>
           <Link to="/">Tableau de bord</Link>
           {!isAdmin && (
@@ -33,15 +37,15 @@ export const AppShell = () => {
             </>
           )}
         </nav>
-        <button
-          className="btn secondary"
+        <Button
+          variant="secondary"
           type="button"
           onClick={() => {
             void supabase.auth.signOut();
           }}
         >
           Se déconnecter
-        </button>
+        </Button>
       </aside>
       <main className="main">
         <Outlet />

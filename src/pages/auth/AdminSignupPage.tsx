@@ -2,6 +2,9 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 
 export const AdminSignupPage = () => {
   const navigate = useNavigate();
@@ -46,20 +49,19 @@ export const AdminSignupPage = () => {
 
   return (
     <div className="auth-layout">
-      <form className="card auth-card grid" onSubmit={onSubmit}>
+      <Card as="form" className="auth-card grid" onSubmit={onSubmit}>
         <h1>Créer un compte admin</h1>
         <label>
           Nom complet
-          <input className="input" required value={fullName} onChange={(event) => setFullName(event.target.value)} />
+          <Input required value={fullName} onChange={(event) => setFullName(event.target.value)} />
         </label>
         <label>
           Email
-          <input className="input" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+          <Input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
         <label>
           Mot de passe
-          <input
-            className="input"
+          <Input
             type="password"
             minLength={8}
             required
@@ -68,11 +70,11 @@ export const AdminSignupPage = () => {
           />
         </label>
         {status && <p className="alert">{status}</p>}
-        <button className="btn" type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading}>
           {loading ? 'Création...' : 'Créer le compte admin'}
-        </button>
+        </Button>
         <Link to="/auth/login">Déjà inscrit ? Se connecter</Link>
-      </form>
+      </Card>
     </div>
   );
 };

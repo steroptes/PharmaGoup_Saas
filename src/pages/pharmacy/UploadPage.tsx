@@ -1,6 +1,9 @@
 import { useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { extractDeliveryNoteFromFile } from '@/services/ocr/tesseractExtractor';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import type { ExtractedDeliveryNote } from '@/types/domain';
 
 export const UploadPage = () => {
@@ -16,6 +19,7 @@ export const UploadPage = () => {
 
     const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
     if (!allowed.includes(file.type)) {
+      setResult(null);
       setError(
         'OCR navigateur: utilisez une image JPG/JPEG/PNG (les PDF doivent être convertis en image avant OCR).',
       );
@@ -51,18 +55,18 @@ export const UploadPage = () => {
 
   return (
     <div className="grid">
-      <section className="card">
+      <Card>
         <h1>Téléverser un BL</h1>
         <p>OCR d'aide uniquement. Corrigez toujours avant soumission.</p>
         <p>Formats OCR supportés: JPG, JPEG, PNG (convertir les PDF avant import).</p>
-        <input className="input" type="file" accept=".jpg,.jpeg,.png" onChange={onFileChange} />
-      </section>
+        <Input type="file" accept=".jpg,.jpeg,.png" onChange={onFileChange} />
+      </Card>
 
       {loading && <section className="alert">Extraction OCR en cours…</section>}
       {error && <section className="alert">{error}</section>}
 
       {result && (
-        <section className="card">
+        <Card>
           <h2>Résultat OCR</h2>
           <p>Confiance: {result.confidence?.toFixed(2) ?? 'N/A'}%</p>
           <p>
@@ -71,13 +75,13 @@ export const UploadPage = () => {
           </p>
           <p>{result.lines.length} ligne(s) produit détectée(s).</p>
           <div className="actions">
-            <button className="btn" onClick={goToCorrection}>Corriger et valider les données</button>
+            <Button onClick={goToCorrection}>Corriger et valider les données</Button>
           </div>
           <details>
             <summary>Voir le JSON brut OCR</summary>
             <pre>{JSON.stringify(result, null, 2)}</pre>
           </details>
-        </section>
+        </Card>
       )}
     </div>
   );
