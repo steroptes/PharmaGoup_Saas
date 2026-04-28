@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { useAuth, roleHomePath } from '@/context/AuthContext';
 import { HomePage } from '@/pages/HomePage';
@@ -15,6 +15,10 @@ import { PharmacySignupPage } from '@/pages/auth/PharmacySignupPage';
 import { AdminSignupPage } from '@/pages/auth/AdminSignupPage';
 
 const FullPageLoader = () => <div className="auth-layout">Chargement de la session...</div>;
+const isPasswordRecoveryFlow = (pathname: string, hash: string) =>
+  pathname === '/auth/reset-password'
+  && (hash.includes('type=recovery') || hash.includes('access_token='));
+
 
 const RequireAuth = () => {
   const { session, profile, isLoading } = useAuth();
@@ -38,8 +42,13 @@ const RequireRole = ({ role }: { role: 'admin' | 'pharmacy_user' }) => {
 
 const GuestOnly = () => {
   const { session, profile, isLoading } = useAuth();
+  const location = useLocation();
 
   if (isLoading) return <FullPageLoader />;
+
+  if (isPasswordRecoveryFlow(location.pathname, location.hash)) {
+    return <Outlet />;
+  }
 
   if (session && session.user.email_confirmed_at && profile) {
     return <Navigate to={roleHomePath(profile.role)} replace />;
