@@ -29,6 +29,8 @@ export const ProductsPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [laboratoryFilter, setLaboratoryFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer le produit'), [editingId]);
 
@@ -48,6 +50,16 @@ export const ProductsPage = () => {
     };
     void load();
   }, []);
+
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    return products.filter((product) => {
+      const matchesLaboratory = laboratoryFilter === 'all' || product.laboratory_id === laboratoryFilter;
+      if (!matchesLaboratory) return false;
+      if (!normalizedQuery) return true;
+      return [product.designation, product.pct_code || '', product.barcode].some((value) => value.toLowerCase().includes(normalizedQuery));
+    });
+  }, [products, laboratoryFilter, searchQuery]);
 
   const resetForm = () => {
     setForm({ ...EMPTY_FORM, vat_rate_id: vatRates[0]?.id || '', laboratory_id: laboratories[0]?.id || '' });
@@ -115,40 +127,52 @@ export const ProductsPage = () => {
   return (
     <div className="grid">
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <div>
-            <h1>Produits</h1>
-            <p>Tableau des produits avec actions d’archivage et d’édition.</p>
-          </div>
-          <Button onClick={openCreateModal}>+ Ajouter un produit</Button>
-        </div>
+        <h1>Produits</h1>
+        <p>Tableau des produits avec actions d’archivage et d’édition.</p>
         {feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}
       </Card>
 
       <Card>
-        <h2>Catalogue</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: 12, flexWrap: 'wrap' }}>
+          <h2>Catalogue</h2>
+          <Button onClick={openCreateModal}>+ Ajouter un produit</Button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
+          <Input
+            placeholder="Rechercher par désignation, code PCT ou code à barre"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+          <Select value={laboratoryFilter} onChange={(event) => setLaboratoryFilter(event.target.value)}>
+            <option value="all">Tous les laboratoires</option>
+            {laboratories.map((laboratory) => (
+              <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>
+            ))}
+          </Select>
+        </div>
+
         {isLoading && <p>Chargement...</p>}
-        {!isLoading && products.length === 0 && <p>Aucun produit enregistré.</p>}
-        {!isLoading && products.length > 0 && (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        {!isLoading && filteredProducts.length === 0 && <p>Aucun produit trouvé.</p>}
+        {!isLoading && filteredProducts.length > 0 && (
+          <div style={{ overflowX: 'auto', width: '100%', marginTop: 12 }}>
+            <table style={{ width: '100%', minWidth: '1200px', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th>Désignation</th><th>Nature</th><th>PCT</th><th>Code barre</th><th>PUA HT</th><th>TVA</th><th>Laboratoire</th><th>Statut</th><th>Actions</th>
+                  <th style={{ textAlign: 'center' }}>Désignation</th><th style={{ textAlign: 'center' }}>Nature</th><th style={{ textAlign: 'center' }}>PCT</th><th style={{ textAlign: 'center' }}>Code barre</th><th style={{ textAlign: 'center' }}>PUA HT</th><th style={{ textAlign: 'center' }}>TVA</th><th style={{ textAlign: 'center' }}>Laboratoire</th><th style={{ textAlign: 'center' }}>Statut</th><th style={{ textAlign: 'center' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {products.map((product) => (
+                {filteredProducts.map((product) => (
                   <tr key={product.id}>
-                    <td>{product.designation}</td>
-                    <td>{product.nature}</td>
-                    <td>{product.pct_code || '-'}</td>
-                    <td>{product.barcode}</td>
-                    <td>{product.purchase_unit_price_ht}</td>
-                    <td>{product.vat_rate?.label || '-'}</td>
-                    <td>{product.laboratory?.designation || '-'}</td>
-                    <td>{product.is_active ? 'Actif' : 'Archivé'}</td>
-                    <td style={{ display: 'flex', gap: 8 }}>
+                    <td style={{ textAlign: 'center' }}>{product.designation}</td>
+                    <td style={{ textAlign: 'center' }}>{product.nature}</td>
+                    <td style={{ textAlign: 'center' }}>{product.pct_code || '-'}</td>
+                    <td style={{ textAlign: 'center' }}>{product.barcode}</td>
+                    <td style={{ textAlign: 'center' }}>{product.purchase_unit_price_ht}</td>
+                    <td style={{ textAlign: 'center' }}>{product.vat_rate?.label || '-'}</td>
+                    <td style={{ textAlign: 'center' }}>{product.laboratory?.designation || '-'}</td>
+                    <td style={{ textAlign: 'center' }}>{product.is_active ? 'Actif' : 'Archivé'}</td>
+                    <td style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                       <Button variant="secondary" type="button" onClick={() => openEditModal(product)}>Modifier</Button>
                       <Button variant="ghost" type="button" onClick={() => void toggleArchive(product)}>{product.is_active ? 'Archiver' : 'Réactiver'}</Button>
                       <Button variant="danger" type="button" disabled>Supprimer (bientôt)</Button>
