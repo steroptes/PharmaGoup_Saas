@@ -31,5 +31,6 @@ export interface ExtractedDeliveryNote {
   totalTVA?: number;
   totalTTC?: number;
   confidence?: number;
+  rawText?: string;
   lines: DeliveryNoteLineInput[];
 }
