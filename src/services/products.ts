@@ -18,6 +18,7 @@ export interface ManagedProduct {
   purchase_unit_price_ht: number;
   vat_rate_id: string;
   laboratory_id: string;
+  is_active: boolean;
   vat_rate?: Pick<VatRate, 'id' | 'label' | 'rate'>;
   laboratory?: { id: string; designation: string };
   created_at: string;
@@ -84,6 +85,18 @@ export const updateManagedProduct = async (id: string, payload: ManagedProductIn
   const { data, error } = await supabase
     .from('managed_products')
     .update(normalizePayload(payload))
+    .eq('id', id)
+    .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
+    .single();
+
+  if (error) throw error;
+  return data as ManagedProduct;
+};
+
+export const setManagedProductArchived = async (id: string, archived: boolean) => {
+  const { data, error } = await supabase
+    .from('managed_products')
+    .update({ is_active: !archived })
     .eq('id', id)
     .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
     .single();
