@@ -61,6 +61,24 @@ Le schéma complet + politiques RLS sont dans:
 - `supabase/migrations/20260428090000_init.sql`
 - `supabase/migrations/20260428152000_auth_signup_bootstrap.sql`
 
+
+## Création manuelle de comptes (fallback)
+Si l'UI Supabase **Authentication > Add user** échoue (ex: log `sb_temp__... invalid`), utilisez le script local avec la clé `service_role`:
+
+```bash
+SUPABASE_URL="https://<project-ref>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service_role_key>" \
+npm run create:user -- --email admin@example.com --password 'StrongPass123!' --role admin --full-name "Admin"
+```
+
+Pour un compte pharmacie:
+
+```bash
+SUPABASE_URL="https://<project-ref>.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="<service_role_key>" \
+npm run create:user -- --email pharma@example.com --password 'StrongPass123!' --role pharmacy_user --full-name "Pharmacien" --pharmacy-name "Pharmacie Atlas" --auto-confirm
+```
+
 ## Dépannage connexion
 - Si vous voyez `Invalid login credentials`, vérifiez d'abord email/mot de passe et la confirmation email.
 - Si vous atteignez la limite d'envoi d'emails Supabase, créez l'utilisateur dans **Authentication > Users > Add user** avec **Auto Confirm User** activé, ou désactivez temporairement `Confirm email` dans les settings Auth pour les tests.
