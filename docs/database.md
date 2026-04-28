@@ -22,8 +22,17 @@ Tables principales (RLS activé):
   - fournisseur cohérent,
   - pharmacie participante.
 
+## Provisioning Auth
+- Trigger `handle_new_user_signup()` sur `auth.users` (migration dédiée).
+- Utilise `raw_user_meta_data` pour hydrater `profiles` (`full_name`, `role`).
+- Si rôle `pharmacy_user`, crée une `pharmacies` puis rattache `profiles.pharmacy_id`.
+
 ## Traçabilité
 - Fichier original (`delivery_notes.file_url`).
 - Confiance OCR (`ocr_confidence`, `line_confidence`).
 - Historique d’action (`audit_logs`).
 - Statuts BL (`draft` → `validated/rejected`).
+
+
+## Notes migration
+- La migration `20260428090000_init.sql` doit créer les tables avant les fonctions helpers (`current_user_role`, `current_user_pharmacy_id`) pour éviter l'erreur `42P01` sur `public.profiles`.
