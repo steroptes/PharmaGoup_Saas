@@ -35,6 +35,7 @@ export const AppShell = () => {
               <Link to="/admin/review">Validation BL</Link>
               <Link to="/admin/groupage">Groupage & Export</Link>
               <Link to="/admin/laboratories">Laboratoires</Link>
+              <Link to="/admin/products">Produits</Link>
             </>
           )}
         </nav>
