@@ -23,9 +23,9 @@
 ## Workflow récupération mot de passe
 1. L'utilisateur ouvre `/auth/forgot-password`.
 2. Saisie email puis envoi du lien via `resetPasswordForEmail`.
-3. Le lien reçu ouvre `/auth/reset-password`.
+3. Le lien reçu ouvre `/auth/reset-password` avec un hash Supabase de recovery (`type=recovery` + tokens).
 4. L'utilisateur définit un nouveau mot de passe via `supabase.auth.updateUser`.
-5. L'utilisateur peut se connecter avec le nouveau mot de passe.
+5. Même si l'utilisateur avait déjà une session active, l'application laisse afficher l'écran de reset tant que le lien de recovery est présent.
 
 ## Workflow pharmacie
 1. Ouvrir campagne active.

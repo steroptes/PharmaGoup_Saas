@@ -29,7 +29,7 @@
 - `AuthProvider` synchronise l'état de session Supabase et le profil métier.
 - `RequireAuth` bloque l'accès si l'utilisateur n'est pas connecté ou sans email confirmé.
 - `RequireRole` empêche l'accès inter-rôles (admin vs pharmacy_user).
-- `GuestOnly` protège les pages auth contre les sessions déjà actives.
+- `GuestOnly` protège les pages auth contre les sessions déjà actives, avec une exception pour `/auth/reset-password` quand le hash contient un token de recovery Supabase (`type=recovery` ou `access_token`) afin d'afficher le formulaire de réinitialisation.
 
 ## Provisioning automatique à l'inscription
 > Cette couche doit être déployée en base (migration Supabase) sinon les profils ne seront pas créés.
