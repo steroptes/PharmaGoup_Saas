@@ -8,6 +8,7 @@ import { CampaignsPage } from '@/pages/admin/CampaignsPage';
 import { ReviewPage } from '@/pages/admin/ReviewPage';
 import { GroupagePage } from '@/pages/admin/GroupagePage';
 import { LaboratoriesPage } from '@/pages/admin/LaboratoriesPage';
+import { ProductsPage } from '@/pages/admin/ProductsPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
@@ -84,6 +85,7 @@ export const AppRouter = () => (
           <Route path="/admin/review" element={<ReviewPage />} />
           <Route path="/admin/groupage" element={<GroupagePage />} />
           <Route path="/admin/laboratories" element={<LaboratoriesPage />} />
+          <Route path="/admin/products" element={<ProductsPage />} />
         </Route>
       </Route>
     </Route>
