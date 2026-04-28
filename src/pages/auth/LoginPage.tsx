@@ -2,6 +2,9 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { roleHomePath, useAuth } from '@/context/AuthContext';
 
 const resolveRoleFromMetadata = (metadata: unknown): 'admin' | 'pharmacy_user' | null => {
@@ -78,12 +81,11 @@ export const LoginPage = () => {
 
   return (
     <div className="auth-layout">
-      <form className="card auth-card grid" onSubmit={onSubmit}>
+      <Card as="form" className="auth-card grid" onSubmit={onSubmit}>
         <h1>Connexion</h1>
         <label>
           Email
-          <input
-            className="input"
+          <Input
             type="email"
             required
             value={email}
@@ -92,8 +94,7 @@ export const LoginPage = () => {
         </label>
         <label>
           Mot de passe
-          <input
-            className="input"
+          <Input
             type="password"
             required
             value={password}
@@ -101,15 +102,15 @@ export const LoginPage = () => {
           />
         </label>
         {error && <p className="alert">{error}</p>}
-        <button className="btn" type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading}>
           {loading ? 'Connexion...' : 'Se connecter'}
-        </button>
+        </Button>
         <Link to="/auth/forgot-password">Mot de passe oublié ?</Link>
         <div className="auth-links">
           <Link to="/auth/register/pharmacy">Créer un compte pharmacie</Link>
           <Link to="/auth/register/admin">Créer un compte admin</Link>
         </div>
-      </form>
+      </Card>
     </div>
   );
 };

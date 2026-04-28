@@ -1,4 +1,6 @@
 import * as XLSX from 'xlsx';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 
 const exportCsv = () => {
   const rows = [
@@ -27,13 +29,13 @@ const exportXlsx = () => {
 
 export const GroupagePage = () => (
   <div className="grid">
-    <section className="card">
+    <Card>
       <h1>Groupage par fournisseur</h1>
       <p>Inclut uniquement les BL au statut validated.</p>
       <div className="actions">
-        <button className="btn" onClick={exportCsv}>Exporter CSV</button>
-        <button className="btn secondary" onClick={exportXlsx}>Exporter XLSX</button>
+        <Button onClick={exportCsv}>Exporter CSV</Button>
+        <Button variant="secondary" onClick={exportXlsx}>Exporter XLSX</Button>
       </div>
-    </section>
+    </Card>
   </div>
 );
