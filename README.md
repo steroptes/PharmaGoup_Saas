@@ -87,3 +87,7 @@ npm run create:user -- --email pharma@example.com --password 'StrongPass123!' --
 - Si vous voyez `406 Not Acceptable` sur `/rest/v1/profiles`, cela signifie souvent que la ligne `public.profiles` de cet utilisateur est absente. Créez/complétez le profil puis reconnectez-vous.
 
 - Si Supabase SQL Editor retourne `42P01: relation "public.profiles" does not exist`, utilisez la version corrigée de `20260428090000_init.sql` (helpers déplacés après création de `profiles`).
+
+## Dépannage OCR
+- Si l'OCR échoue sur un BL PDF avec des erreurs console de type `pixRead` / `Pdf reading is not supported`, convertir d'abord la page du BL en image (`.png` ou `.jpg`) puis relancer l'import OCR.
+- Dans l'état actuel du MVP, le flux OCR navigateur est limité aux formats image (`JPG/JPEG/PNG`).

@@ -12,6 +12,12 @@ const parseDate = (text: string): string | undefined => {
 };
 
 export const extractDeliveryNoteFromFile = async (file: File): Promise<ExtractedDeliveryNote> => {
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+    throw new Error(
+      "Le moteur OCR navigateur ne prend pas en charge les PDF bruts. Convertissez la première page en PNG/JPG avant l'import.",
+    );
+  }
+
   const worker = await createWorker('fra');
   const {
     data: { text, confidence },
