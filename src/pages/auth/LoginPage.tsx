@@ -4,6 +4,19 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { roleHomePath, useAuth } from '@/context/AuthContext';
 
+const resolveRoleFromMetadata = (metadata: unknown): 'admin' | 'pharmacy_user' | null => {
+  if (
+    metadata
+    && typeof metadata === 'object'
+    && 'role' in metadata
+    && (metadata.role === 'admin' || metadata.role === 'pharmacy_user')
+  ) {
+    return metadata.role;
+  }
+
+  return null;
+};
+
 export const LoginPage = () => {
   const navigate = useNavigate();
   const { refreshProfile } = useAuth();
@@ -20,7 +33,11 @@ export const LoginPage = () => {
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
     if (signInError) {
-      setError(signInError.message);
+      setError(
+        signInError.message === 'Invalid login credentials'
+          ? 'Identifiants invalides. Vérifiez email/mot de passe ou utilisez "Mot de passe oublié ?".'
+          : signInError.message,
+      );
       setLoading(false);
       return;
     }
@@ -33,19 +50,29 @@ export const LoginPage = () => {
       return;
     }
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', data.user.id)
-      .single();
+    let role = resolveRoleFromMetadata(data.user.user_metadata) ?? resolveRoleFromMetadata(data.user.app_metadata);
 
-    if (!profile) {
-      setError('Profil introuvable. Contactez un administrateur.');
+    if (!role) {
+      const { data: dbProfiles } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user.id)
+        .limit(1);
+
+      const dbProfile = dbProfiles?.[0];
+
+      if (dbProfile?.role === 'admin' || dbProfile?.role === 'pharmacy_user') {
+        role = dbProfile.role;
+      }
+    }
+
+    if (!role) {
+      setError('Rôle utilisateur introuvable. Vérifiez que le profil existe dans public.profiles.');
       setLoading(false);
       return;
     }
 
-    navigate(roleHomePath(profile.role), { replace: true });
+    navigate(roleHomePath(role), { replace: true });
     setLoading(false);
   };
 

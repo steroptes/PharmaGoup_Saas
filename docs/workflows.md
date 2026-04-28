@@ -1,6 +1,7 @@
 # Workflows
 
 ## Workflow création de compte
+> Pré-requis: migration `20260428152000_auth_signup_bootstrap.sql` appliquée sur le projet Supabase.
 1. L'utilisateur choisit `Créer un compte pharmacie` ou `Créer un compte admin` depuis `/auth/login`.
 2. Le formulaire appelle `supabase.auth.signUp` avec métadonnées (`role`, `full_name`, `pharmacy_name`).
 3. Un trigger SQL crée automatiquement le profil dans `public.profiles` et, pour pharmacie, une entrée `public.pharmacies`.

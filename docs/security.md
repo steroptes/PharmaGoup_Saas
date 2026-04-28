@@ -32,6 +32,7 @@
 - `GuestOnly` protège les pages auth contre les sessions déjà actives.
 
 ## Provisioning automatique à l'inscription
+> Cette couche doit être déployée en base (migration Supabase) sinon les profils ne seront pas créés.
 - Trigger `handle_new_user_signup()` sur `auth.users`.
 - Création automatique du `profile` selon `raw_user_meta_data.role`.
 - Pour `pharmacy_user`, création automatique d'une ligne `pharmacies` et liaison `profiles.pharmacy_id`.

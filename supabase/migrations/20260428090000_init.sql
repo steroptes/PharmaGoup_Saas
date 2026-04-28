@@ -6,27 +6,6 @@ create type public.app_role as enum ('admin', 'pharmacy_user');
 create type public.campaign_status as enum ('draft', 'open', 'closed', 'archived');
 create type public.delivery_note_status as enum ('draft', 'extracted', 'corrected', 'submitted', 'validated', 'rejected');
 
--- Utility helpers
-create or replace function public.current_user_role()
-returns public.app_role
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select role from public.profiles where id = auth.uid();
-$$;
-
-create or replace function public.current_user_pharmacy_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select pharmacy_id from public.profiles where id = auth.uid();
-$$;
-
 -- Core tables
 create table public.pharmacies (
   id uuid primary key default gen_random_uuid(),
@@ -144,6 +123,28 @@ create table public.audit_logs (
   details jsonb,
   created_at timestamptz not null default now()
 );
+
+
+-- Utility helpers (defined after profiles table exists)
+create or replace function public.current_user_role()
+returns public.app_role
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select role from public.profiles where id = auth.uid();
+$$;
+
+create or replace function public.current_user_pharmacy_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select pharmacy_id from public.profiles where id = auth.uid();
+$$;
 
 -- Update timestamp trigger
 create or replace function public.set_updated_at()

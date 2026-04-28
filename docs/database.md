@@ -32,3 +32,7 @@ Tables principales (RLS activé):
 - Confiance OCR (`ocr_confidence`, `line_confidence`).
 - Historique d’action (`audit_logs`).
 - Statuts BL (`draft` → `validated/rejected`).
+
+
+## Notes migration
+- La migration `20260428090000_init.sql` doit créer les tables avant les fonctions helpers (`current_user_role`, `current_user_pharmacy_id`) pour éviter l'erreur `42P01` sur `public.profiles`.

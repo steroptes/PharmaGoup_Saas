@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { PropsWithChildren } from 'react';
-import type { Session } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { Role } from '@/types/domain';
 
@@ -22,34 +22,53 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export const roleHomePath = (role: Role) => (role === 'admin' ? '/admin/campaigns' : '/pharmacy/upload');
 
+const resolveRoleFromUser = (user: User): Role | null => {
+  const metadataRole = user.user_metadata?.role ?? user.app_metadata?.role;
+  return metadataRole === 'admin' || metadataRole === 'pharmacy_user' ? metadataRole : null;
+};
+
+const fallbackProfileFromUser = (user: User): UserProfile | null => {
+  const role = resolveRoleFromUser(user);
+  if (!role) return null;
+
+  return {
+    id: user.id,
+    full_name: (user.user_metadata?.full_name as string | undefined) ?? user.email ?? 'Utilisateur',
+    role,
+    pharmacy_id: (user.user_metadata?.pharmacy_id as string | undefined) ?? null,
+  };
+};
+
 export const AuthProvider = ({ children }: PropsWithChildren) => {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadProfile = async (userId: string) => {
+  const loadProfile = async (user: User) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('id, full_name, role, pharmacy_id')
-      .eq('id', userId)
-      .single();
+      .eq('id', user.id)
+      .limit(1);
 
-    if (error) {
-      setProfile(null);
+    const profileRow = data?.[0] ?? null;
+
+    if (error || !profileRow) {
+      setProfile(fallbackProfileFromUser(user));
       return;
     }
 
-    setProfile(data);
+    setProfile(profileRow);
   };
 
   const refreshProfile = async () => {
-    const userId = session?.user.id;
-    if (!userId) {
+    const user = session?.user;
+    if (!user) {
       setProfile(null);
       return;
     }
 
-    await loadProfile(userId);
+    await loadProfile(user);
   };
 
   useEffect(() => {
@@ -60,8 +79,8 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       if (!active) return;
       setSession(data.session);
 
-      if (data.session?.user.id) {
-        await loadProfile(data.session.user.id);
+      if (data.session?.user) {
+        await loadProfile(data.session.user);
       }
 
       if (active) setIsLoading(false);
@@ -73,14 +92,14 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (!nextSession?.user.id) {
+      if (!nextSession?.user) {
         setProfile(null);
         setIsLoading(false);
         return;
       }
 
       setIsLoading(true);
-      void loadProfile(nextSession.user.id).finally(() => setIsLoading(false));
+      void loadProfile(nextSession.user).finally(() => setIsLoading(false));
     });
 
     return () => {
