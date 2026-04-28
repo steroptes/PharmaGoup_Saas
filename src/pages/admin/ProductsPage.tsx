@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { Archive, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/input';
@@ -19,6 +20,17 @@ const EMPTY_FORM = {
   purchase_unit_price_ht: '', vat_rate_id: '', laboratory_id: '',
 };
 
+const getFriendlyProductError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : 'Action impossible.';
+  if (message.includes('managed_products_pct_code_ci_unique') || message.includes('managed_products_pct_unique_not_null')) {
+    return 'Le code PCT existe déjà. Veuillez saisir un code PCT unique.';
+  }
+  if (message.includes('managed_products_barcode_ci_unique') || message.includes('managed_products_barcode_key')) {
+    return 'Le code à barre existe déjà. Veuillez saisir un code à barre unique.';
+  }
+  return message;
+};
+
 export const ProductsPage = () => {
   const [products, setProducts] = useState<ManagedProduct[]>([]);
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
@@ -26,6 +38,7 @@ export const ProductsPage = () => {
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -64,6 +77,7 @@ export const ProductsPage = () => {
   const resetForm = () => {
     setForm({ ...EMPTY_FORM, vat_rate_id: vatRates[0]?.id || '', laboratory_id: laboratories[0]?.id || '' });
     setEditingId(null);
+    setFieldError(null);
   };
 
   const openCreateModal = () => {
@@ -74,6 +88,7 @@ export const ProductsPage = () => {
   const openEditModal = (product: ManagedProduct) => {
     setEditingId(product.id);
     setForm({ designation: product.designation, nature: product.nature, pct_code: product.pct_code ?? '', barcode: product.barcode, purchase_unit_price_ht: String(product.purchase_unit_price_ht), vat_rate_id: product.vat_rate_id, laboratory_id: product.laboratory_id });
+    setFieldError(null);
     setIsModalOpen(true);
   };
 
@@ -89,9 +104,10 @@ export const ProductsPage = () => {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const validationError = validate();
-    if (validationError) return setFeedback(validationError);
+    if (validationError) return setFieldError(validationError);
 
     setIsSaving(true);
+    setFieldError(null);
     setFeedback(null);
 
     try {
@@ -108,7 +124,7 @@ export const ProductsPage = () => {
       setIsModalOpen(false);
       resetForm();
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Action impossible.');
+      setFieldError(getFriendlyProductError(error));
     } finally {
       setIsSaving(false);
     }
@@ -138,16 +154,10 @@ export const ProductsPage = () => {
           <Button onClick={openCreateModal}>+ Ajouter un produit</Button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
-          <Input
-            placeholder="Rechercher par désignation, code PCT ou code à barre"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-          />
+          <Input placeholder="Rechercher par désignation, code PCT ou code à barre" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
           <Select value={laboratoryFilter} onChange={(event) => setLaboratoryFilter(event.target.value)}>
             <option value="all">Tous les laboratoires</option>
-            {laboratories.map((laboratory) => (
-              <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>
-            ))}
+            {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
           </Select>
         </div>
 
@@ -158,7 +168,7 @@ export const ProductsPage = () => {
             <table style={{ width: '100%', minWidth: '1200px', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: 'center' }}>Désignation</th><th style={{ textAlign: 'center' }}>Nature</th><th style={{ textAlign: 'center' }}>PCT</th><th style={{ textAlign: 'center' }}>Code barre</th><th style={{ textAlign: 'center' }}>PUA HT</th><th style={{ textAlign: 'center' }}>TVA</th><th style={{ textAlign: 'center' }}>Laboratoire</th><th style={{ textAlign: 'center' }}>Statut</th><th style={{ textAlign: 'center' }}>Actions</th>
+                  <th style={{ textAlign: 'center' }}>Désignation</th><th style={{ textAlign: 'center' }}>Nature</th><th style={{ textAlign: 'center' }}>PCT</th><th style={{ textAlign: 'center' }}>Code barre</th><th style={{ textAlign: 'center' }}>PUA HT</th><th style={{ textAlign: 'center' }}>TVA</th><th style={{ textAlign: 'center' }}>Laboratoire</th><th style={{ textAlign: 'center' }}>Statut</th><th style={{ textAlign: 'center' }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -173,9 +183,15 @@ export const ProductsPage = () => {
                     <td style={{ textAlign: 'center' }}>{product.laboratory?.designation || '-'}</td>
                     <td style={{ textAlign: 'center' }}>{product.is_active ? 'Actif' : 'Archivé'}</td>
                     <td style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-                      <Button variant="secondary" type="button" onClick={() => openEditModal(product)}>Modifier</Button>
-                      <Button variant="ghost" type="button" onClick={() => void toggleArchive(product)}>{product.is_active ? 'Archiver' : 'Réactiver'}</Button>
-                      <Button variant="danger" type="button" disabled>Supprimer (bientôt)</Button>
+                      <Button variant="secondary" type="button" onClick={() => openEditModal(product)} aria-label="Modifier">
+                        <Pencil size={16} />
+                      </Button>
+                      <Button variant="ghost" type="button" onClick={() => void toggleArchive(product)} aria-label={product.is_active ? 'Archiver' : 'Réactiver'}>
+                        <Archive size={16} />
+                      </Button>
+                      <Button variant="danger" type="button" disabled aria-label="Supprimer (bientôt)">
+                        <Trash2 size={16} />
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -204,6 +220,7 @@ export const ProductsPage = () => {
               <Select value={form.laboratory_id} onChange={(event) => setForm((current) => ({ ...current, laboratory_id: event.target.value }))} required>
                 <option value="" disabled>Sélectionner un laboratoire</option>{laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
               </Select>
+              {fieldError && <p style={{ color: '#b42318' }}>{fieldError}</p>}
               <Button type="submit" disabled={isSaving}>{actionLabel}</Button>
             </form>
           </Card>
