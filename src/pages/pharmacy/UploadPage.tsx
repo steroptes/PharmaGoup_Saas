@@ -10,9 +10,11 @@ export const UploadPage = () => {
   const onFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+    const allowed = ['image/jpeg', 'image/jpg', 'image/png'];
     if (!allowed.includes(file.type)) {
-      setError('Formats supportés: PDF, JPG, JPEG, PNG');
+      setError(
+        'OCR navigateur: utilisez une image JPG/JPEG/PNG (les PDF doivent être convertis en image avant OCR).',
+      );
       return;
     }
 
@@ -22,8 +24,9 @@ export const UploadPage = () => {
     try {
       const extracted = await extractDeliveryNoteFromFile(file);
       setResult(extracted);
-    } catch {
-      setError('Échec OCR. Vérifiez le fichier ou réessayez.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Échec OCR. Vérifiez le fichier ou réessayez.';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -34,7 +37,8 @@ export const UploadPage = () => {
       <section className="card">
         <h1>Téléverser un BL</h1>
         <p>OCR d'aide uniquement. Corrigez toujours avant soumission.</p>
-        <input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={onFileChange} />
+        <p>Formats OCR supportés: JPG, JPEG, PNG (convertir les PDF avant import).</p>
+        <input className="input" type="file" accept=".jpg,.jpeg,.png" onChange={onFileChange} />
       </section>
 
       {loading && <section className="alert">Extraction OCR en cours…</section>}
