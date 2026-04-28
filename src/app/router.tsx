@@ -7,6 +7,7 @@ import { CorrectionPage } from '@/pages/pharmacy/CorrectionPage';
 import { CampaignsPage } from '@/pages/admin/CampaignsPage';
 import { ReviewPage } from '@/pages/admin/ReviewPage';
 import { GroupagePage } from '@/pages/admin/GroupagePage';
+import { LaboratoriesPage } from '@/pages/admin/LaboratoriesPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
@@ -82,6 +83,7 @@ export const AppRouter = () => (
           <Route path="/admin/campaigns" element={<CampaignsPage />} />
           <Route path="/admin/review" element={<ReviewPage />} />
           <Route path="/admin/groupage" element={<GroupagePage />} />
+          <Route path="/admin/laboratories" element={<LaboratoriesPage />} />
         </Route>
       </Route>
     </Route>
