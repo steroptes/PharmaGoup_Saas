@@ -25,10 +25,16 @@
    - Recommandation: vérifier `current_user_role() = 'admin'` avant génération.
 
 ## Auth frontend (Supabase)
+- Pages d'inscription dédiées pour les rôles `admin` et `pharmacy_user`.
 - `AuthProvider` synchronise l'état de session Supabase et le profil métier.
 - `RequireAuth` bloque l'accès si l'utilisateur n'est pas connecté ou sans email confirmé.
 - `RequireRole` empêche l'accès inter-rôles (admin vs pharmacy_user).
 - `GuestOnly` protège les pages auth contre les sessions déjà actives.
+
+## Provisioning automatique à l'inscription
+- Trigger `handle_new_user_signup()` sur `auth.users`.
+- Création automatique du `profile` selon `raw_user_meta_data.role`.
+- Pour `pharmacy_user`, création automatique d'une ligne `pharmacies` et liaison `profiles.pharmacy_id`.
 
 ## Vérification email
 - Page dédiée `/auth/verify-email`.

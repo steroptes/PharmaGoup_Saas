@@ -78,6 +78,10 @@ export const LoginPage = () => {
           {loading ? 'Connexion...' : 'Se connecter'}
         </button>
         <Link to="/auth/forgot-password">Mot de passe oublié ?</Link>
+        <div className="auth-links">
+          <Link to="/auth/register/pharmacy">Créer un compte pharmacie</Link>
+          <Link to="/auth/register/admin">Créer un compte admin</Link>
+        </div>
       </form>
     </div>
   );

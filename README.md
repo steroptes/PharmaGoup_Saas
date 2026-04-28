@@ -32,6 +32,8 @@ Le frontend inclut désormais un module d'authentification complet basé sur Sup
 - `/auth/verify-email`: renvoi du lien de vérification d'email.
 - `/auth/forgot-password`: demande de récupération de mot de passe.
 - `/auth/reset-password`: mise à jour du mot de passe depuis lien de récupération.
+ - `/auth/register/pharmacy`: création de compte pharmacie.
+- `/auth/register/admin`: création de compte administrateur.
 
 ## Livraison MVP (phases)
 - Phase 1: Auth, rôles, schéma SQL, RLS, référentiels.
@@ -52,3 +54,4 @@ Le frontend inclut désormais un module d'authentification complet basé sur Sup
 ## SQL Supabase
 Le schéma complet + politiques RLS sont dans:
 - `supabase/migrations/20260428090000_init.sql`
+- `supabase/migrations/20260428152000_auth_signup_bootstrap.sql`

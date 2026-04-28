@@ -11,6 +11,8 @@ import { LoginPage } from '@/pages/auth/LoginPage';
 import { VerifyEmailPage } from '@/pages/auth/VerifyEmailPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
+import { PharmacySignupPage } from '@/pages/auth/PharmacySignupPage';
+import { AdminSignupPage } from '@/pages/auth/AdminSignupPage';
 
 const FullPageLoader = () => <div className="auth-layout">Chargement de la session...</div>;
 
@@ -52,6 +54,8 @@ export const AppRouter = () => (
       <Route path="/auth/login" element={<LoginPage />} />
       <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/auth/register/pharmacy" element={<PharmacySignupPage />} />
+      <Route path="/auth/register/admin" element={<AdminSignupPage />} />
     </Route>
 
     <Route path="/auth/verify-email" element={<VerifyEmailPage />} />

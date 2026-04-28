@@ -1,5 +1,11 @@
 # Workflows
 
+## Workflow création de compte
+1. L'utilisateur choisit `Créer un compte pharmacie` ou `Créer un compte admin` depuis `/auth/login`.
+2. Le formulaire appelle `supabase.auth.signUp` avec métadonnées (`role`, `full_name`, `pharmacy_name`).
+3. Un trigger SQL crée automatiquement le profil dans `public.profiles` et, pour pharmacie, une entrée `public.pharmacies`.
+4. L'utilisateur confirme son email via `/auth/verify-email`, puis se connecte.
+
 ## Workflow authentification
 1. L'utilisateur ouvre `/auth/login`.
 2. Le système authentifie via `supabase.auth.signInWithPassword`.
