@@ -110,3 +110,33 @@ npm run create:user -- --email pharma@example.com --password 'StrongPass123!' --
   - si BU(s) existent: pas de produit racine
   - si BU(s) existent: pas de group/brand racine
   - group/brand relié à la BU du même labo
+
+## Sprint 2 livré — Bulk actions catalogue hiérarchique
+- **Périmètre livré**:
+  - `POST /catalog/products/bulk-move` via RPC `catalog_products_bulk_move`.
+  - `POST /catalog/products/bulk-delete` via RPC `catalog_products_bulk_delete`.
+  - `POST /catalog/group-brands/bulk-move` via RPC `catalog_group_brands_bulk_move`.
+  - `POST /catalog/group-brands/bulk-delete` via RPC `catalog_group_brands_bulk_delete`.
+  - `DELETE /business-units/{id}` via RPC `delete_business_unit` (refus si BU non vide).
+- **Règles métier bulk appliquées**:
+  - validations strictes destination/source (mono-labo, destination unique, mode valide),
+  - transactions SQL atomiques (all-or-nothing),
+  - suppression BU interdite si produits ou group/brands attachés,
+  - journalisation minimale des opérations de masse (`catalog_bulk_audit_logs`).
+- **Payloads API (via RPC Supabase)**:
+  - `catalog_products_bulk_move(p_laboratory_id, p_product_ids[], p_target_business_unit_id?, p_target_group_brand_id?)`
+  - `catalog_products_bulk_delete(p_laboratory_id, p_product_ids[])`
+  - `catalog_group_brands_bulk_move(p_laboratory_id, p_group_brand_ids[], p_target_business_unit_id)`
+  - `catalog_group_brands_bulk_delete(p_laboratory_id, p_group_brand_ids[], p_mode, p_relocate_to_business_unit_id?, p_relocate_to_group_brand_id?)`
+- **Erreurs métier structurées**:
+  - `CATALOG_BULK_PRODUCTS_INVALID_TARGET`, `CATALOG_BULK_PRODUCTS_CROSS_LAB`, `CATALOG_BULK_PRODUCTS_NOT_FOUND`,
+  - `CATALOG_BULK_BRANDS_INVALID_TARGET`, `CATALOG_BULK_BRANDS_INVALID_MODE`, `CATALOG_BULK_BRANDS_INVALID_RELOCATION`,
+  - `BUSINESS_UNIT_NOT_EMPTY`.
+- **Exemples de scénarios**:
+  - move produits vers BU,
+  - move produits vers group/brand (dans BU),
+  - delete brand + produits,
+  - delete brand + relocalisation des produits.
+- **Limites / report Sprint 3**:
+  - pas de wizard de migration initiale (création 1ère BU + migration assistée),
+  - pas d'UI guidée bulk complète (contrats backend/API uniquement).

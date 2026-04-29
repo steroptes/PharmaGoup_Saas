@@ -51,3 +51,21 @@ Tables principales (RLS activé):
 
 ### Endpoint lecture
 - Fonction RPC `get_laboratory_catalog_tree` retournant un JSON hiérarchique exploitable UI.
+
+## Sprint 2 — Bulk operations catalogue
+### Nouvelles structures
+- `catalog_bulk_audit_logs`: journal minimum des bulk actions (acteur, opération, labo, payload JSON).
+- Index ajoutés:
+  - `idx_group_brands_laboratory_bu`
+  - `idx_managed_products_laboratory_parent`
+  - `idx_catalog_bulk_audit_logs_laboratory`
+
+### Nouvelles fonctions RPC
+- `catalog_products_bulk_move(...)`.
+- `catalog_products_bulk_delete(...)`.
+- `catalog_group_brands_bulk_move(...)`.
+- `catalog_group_brands_bulk_delete(...)`.
+- `delete_business_unit(p_business_unit_id uuid)` avec garde-fou BU non vide.
+
+### Contrats d'erreurs métier
+Les fonctions lèvent des exceptions à préfixes stables: `CATALOG_BULK_*` et `BUSINESS_UNIT_*` pour faciliter le mapping API/frontend.

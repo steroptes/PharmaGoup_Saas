@@ -38,3 +38,12 @@
 - Nouveau sous-domaine catalogue hiérarchique: `laboratories -> business_units -> group_brands -> managed_products`.
 - Les règles d'intégrité sont validées en base via trigger `validate_catalog_hierarchy()`.
 - La lecture arborescente est exposée via RPC SQL `get_laboratory_catalog_tree(target_laboratory_id uuid)`.
+
+## Sprint 2 — Architecture bulk catalogue
+- Les opérations bulk catalogue passent par des RPC SQL transactionnelles (source de vérité côté DB).
+- Les services frontend `src/services/catalogBulk.ts` exposent les contrats API bulk.
+- La cohérence est garantie par combinaison:
+  - validations métier dans chaque RPC,
+  - trigger existant `validate_catalog_hierarchy()` (Sprint 1),
+  - audit minimal dans `catalog_bulk_audit_logs`.
+- Les mouvements invalides (cross-lab, destination incohérente, mode invalide) sont bloqués avant mutation.
