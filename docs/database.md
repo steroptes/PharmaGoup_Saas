@@ -36,3 +36,18 @@ Tables principales (RLS activé):
 
 ## Notes migration
 - La migration `20260428090000_init.sql` doit créer les tables avant les fonctions helpers (`current_user_role`, `current_user_pharmacy_id`) pour éviter l'erreur `42P01` sur `public.profiles`.
+
+## Sprint 1 livré — Schéma catalogue hiérarchique
+### Nouvelles structures
+- `business_units(id, laboratory_id, name, created_at)`.
+- `group_brands(id, laboratory_id, business_unit_id, name, created_at)`.
+- `managed_products` enrichie avec `business_unit_id` et `group_brand_id`.
+
+### Contraintes et règles implémentées
+- Trigger `validate_catalog_hierarchy()` sur `group_brands` et `managed_products`.
+- Interdiction produit/group-brand racine si BU existantes.
+- Interdiction parentage multiple d'un produit.
+- Contrôle de cohérence inter-laboratoire des FK métier (BU/GroupBrand du même labo).
+
+### Endpoint lecture
+- Fonction RPC `get_laboratory_catalog_tree` retournant un JSON hiérarchique exploitable UI.

@@ -33,3 +33,8 @@
 - OCR découplé par `templates/` fournisseur (ex: prophasud, medigros).
 - RLS centralisée dans Postgres pour sécurité multi-tenant.
 - Export CSV/XLSX indépendant du rendu écran.
+
+## Sprint 1 — Catalogue hiérarchique laboratoire
+- Nouveau sous-domaine catalogue hiérarchique: `laboratories -> business_units -> group_brands -> managed_products`.
+- Les règles d'intégrité sont validées en base via trigger `validate_catalog_hierarchy()`.
+- La lecture arborescente est exposée via RPC SQL `get_laboratory_catalog_tree(target_laboratory_id uuid)`.
