@@ -91,3 +91,22 @@ npm run create:user -- --email pharma@example.com --password 'StrongPass123!' --
 ## Dépannage OCR
 - Si l'OCR échoue sur un BL PDF avec des erreurs console de type `pixRead` / `Pdf reading is not supported`, convertir d'abord la page du BL en image (`.png` ou `.jpg`) puis relancer l'import OCR.
 - Dans l'état actuel du MVP, le flux OCR navigateur est limité aux formats image (`JPG/JPEG/PNG`).
+
+## Sprint 1 livré — Catalogue laboratoire hiérarchique
+- **Périmètre**: fondations SQL (`business_units`, `group_brands`, rattachements produits), règles backend via triggers SQL, endpoint de lecture hiérarchique via RPC `get_laboratory_catalog_tree`, services frontend de consommation.
+- **Décisions techniques**: validation structurelle du parent logique au niveau base (source de vérité), endpoint de lecture matérialisé en JSON hiérarchique côté SQL pour réduire la logique UI.
+- **Limites connues**: Sprint 1 n'inclut pas les opérations de bulk move/delete ni assistant de migration des catalogues existants.
+- **Exemple API**:
+  ```json
+  {
+    "laboratory_id": "...",
+    "business_units": [{"id":"...","name":"BU","products":[],"group_brands":[]}],
+    "root_group_brands": [],
+    "root_products": []
+  }
+  ```
+- **Checklist règles**:
+  - produit = un seul parent logique (racine labo OU BU OU group/brand)
+  - si BU(s) existent: pas de produit racine
+  - si BU(s) existent: pas de group/brand racine
+  - group/brand relié à la BU du même labo
