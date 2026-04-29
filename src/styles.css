@@ -232,3 +232,45 @@ label {
     padding: 0.9rem;
   }
 }
+
+
+.ui-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.ui-table-head-cell,
+.ui-table-cell {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.7rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ui-table-row:hover {
+  background: #f8fafc;
+}
+
+
+.ui-dropdown-menu {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+}
+
+.ui-dropdown-item {
+  display: flex;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.ui-dropdown-item:hover:not(:disabled) {
+  background: #f1f5f9;
+}
