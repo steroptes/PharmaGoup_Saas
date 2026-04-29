@@ -14,6 +14,8 @@ import {
 import { getLaboratoryCatalogTree, LaboratoryCatalogTree } from '@/services/catalogue';
 import { bulkDeleteGroupBrands, bulkDeleteProducts, bulkMoveGroupBrands, bulkMoveProducts, deleteBusinessUnit } from '@/services/catalogBulk';
 import { commitFirstBuMigration, createBusinessUnitOrRequireMigration, initFirstBuMigration, previewFirstBuMigration } from '@/services/catalogFirstBuMigration';
+import { createManagedProduct, listVatRates, ProductNature, VatRate } from '@/services/products';
+import { supabase } from '@/lib/supabase';
 
 const PAGE_SIZE = 8;
 const EMPTY_FORM = { designation: '', tax_identifier: '', address: '', mobile_phone: '', landline_phone: '' };
@@ -39,6 +41,10 @@ export const LaboratoriesPage = () => {
   const [selectedNode, setSelectedNode] = useState<{ type: NodeType; id?: string } | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [catalogActionModal, setCatalogActionModal] = useState<null | 'create_bu' | 'create_root_brand' | 'create_root_product'>(null);
+  const [catalogActionValue, setCatalogActionValue] = useState('');
+  const [productForm, setProductForm] = useState({ designation: '', nature: 'medicament' as ProductNature, pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: '' });
+  const [vatRates, setVatRates] = useState<VatRate[]>([]);
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer la fiche'), [editingId]);
 
@@ -67,6 +73,7 @@ export const LaboratoriesPage = () => {
       }
     };
     void load();
+    void listVatRates().then((data) => setVatRates(data)).catch(() => undefined);
   }, []);
 
   useEffect(() => { if (selectedLabId && isCatalogModalOpen) void loadCatalog(selectedLabId); }, [selectedLabId, isCatalogModalOpen]);
@@ -129,27 +136,50 @@ export const LaboratoriesPage = () => {
     } catch (error) { setFeedback(error instanceof Error ? error.message : 'Action impossible.'); } finally { setIsSaving(false); }
   };
 
-  const handleCreateBU = async () => {
-    if (!selectedLabId) return;
-    const name = window.prompt('Nom de la BU');
-    if (!name) return;
+  const submitCreateBU = async () => {
+    if (!selectedLabId || !catalogActionValue.trim()) return;
     try {
-      const result = await createBusinessUnitOrRequireMigration(selectedLabId, name);
+      const result = await createBusinessUnitOrRequireMigration(selectedLabId, catalogActionValue.trim());
       if (result.status === 'migration_required') {
-        const init = await initFirstBuMigration(selectedLabId, name);
+        const init = await initFirstBuMigration(selectedLabId, catalogActionValue.trim());
         const plan = { products: init.inventory?.root_products?.map((p) => ({ id: p.id, target_type: 'business_unit' })) ?? [], group_brands: init.inventory?.root_group_brands?.map((b) => ({ id: b.id, target_type: 'business_unit' })) ?? [] };
         await previewFirstBuMigration(selectedLabId, init.migration_id, plan);
-        if (window.confirm('Migration requise. Confirmer le commit du plan de migration initial ?')) {
-          await commitFirstBuMigration(selectedLabId, init.migration_id, plan);
-          setFeedback('Migration première BU effectuée avec succès.');
-        }
+        await commitFirstBuMigration(selectedLabId, init.migration_id, plan);
+        setFeedback('Migration première BU effectuée avec succès.');
       } else {
         setFeedback('BU créée avec succès.');
       }
       setCatalogHasPendingChanges(true);
+      setCatalogActionModal(null);
+      setCatalogActionValue('');
       await loadCatalog(selectedLabId);
     } catch (error) { setFeedback(error instanceof Error ? error.message : 'Création BU impossible.'); }
   };
+
+  const submitCreateRootBrand = async () => {
+    if (!selectedLabId || !catalogActionValue.trim()) return;
+    const { error } = await supabase.from('group_brands').insert({ laboratory_id: selectedLabId, name: catalogActionValue.trim(), business_unit_id: null });
+    if (error) return setFeedback(error.message);
+    setCatalogHasPendingChanges(true);
+    setCatalogActionModal(null);
+    setCatalogActionValue('');
+    setFeedback('Brand racine créé.');
+    await loadCatalog(selectedLabId);
+  };
+
+  const submitCreateRootProduct = async () => {
+    if (!selectedLabId) return;
+    if (!productForm.designation.trim() || !productForm.vat_rate_id || !productForm.purchase_unit_price_ht) return setFeedback('Complétez les champs obligatoires du produit.');
+    try {
+      await createManagedProduct({ designation: productForm.designation.trim(), nature: productForm.nature, pct_code: productForm.pct_code, barcode: productForm.barcode, purchase_unit_price_ht: Number(productForm.purchase_unit_price_ht), vat_rate_id: productForm.vat_rate_id, laboratory_id: selectedLabId });
+      setCatalogHasPendingChanges(true);
+      setCatalogActionModal(null);
+      setProductForm({ designation: '', nature: 'medicament', pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: vatRates[0]?.id || '' });
+      setFeedback('Produit racine créé.');
+      await loadCatalog(selectedLabId);
+    } catch (error) { setFeedback(error instanceof Error ? error.message : 'Création produit impossible.'); }
+  };
+
 
   const filtered = useMemo(() => {
     if (!catalog) return null;
@@ -179,8 +209,8 @@ export const LaboratoriesPage = () => {
       <Input placeholder="Recherche locale (BU, brand, produit)" value={search} onChange={(e) => setSearch(e.target.value)} />
       {catalogLoading && <p>Chargement du catalogue…</p>}
       {filtered && <>
-        <p>Compteurs: BU {filtered.business_units.length} • Brands {(filtered.root_group_brands.length + filtered.business_units.reduce((acc, bu) => acc + bu.group_brands.length, 0))} • Produits {(filtered.root_products.length + filtered.business_units.reduce((acc, bu) => acc + bu.products.length + bu.group_brands.reduce((a, b) => a + b.products.length, 0), 0))}</p>
-        <div><Button onClick={() => { setSelectedNode({ type: 'root' }); void handleCreateBU(); }}>Créer BU</Button>{filtered.business_units.length === 0 && <><Button variant="secondary">Ajouter produit racine</Button><Button variant="secondary">Créer brand racine</Button></>}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(120px, 1fr))', gap: 12, marginTop: 12 }}><Card><p style={{ fontSize: 12, opacity: 0.7 }}>Business Units</p><h3>🏢 {filtered.business_units.length}</h3></Card><Card><p style={{ fontSize: 12, opacity: 0.7 }}>Brands</p><h3>🏷️ {(filtered.root_group_brands.length + filtered.business_units.reduce((acc, bu) => acc + bu.group_brands.length, 0))}</h3></Card><Card><p style={{ fontSize: 12, opacity: 0.7 }}>Produits</p><h3>📦 {(filtered.root_products.length + filtered.business_units.reduce((acc, bu) => acc + bu.products.length + bu.group_brands.reduce((a, b) => a + b.products.length, 0), 0))}</h3></Card></div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}><Button onClick={() => { setSelectedNode({ type: 'root' }); setCatalogActionModal('create_bu'); }}>Créer BU</Button>{filtered.business_units.length === 0 && <><Button variant="secondary" onClick={() => { setCatalogActionModal('create_root_product'); setProductForm((c) => ({ ...c, vat_rate_id: c.vat_rate_id || vatRates[0]?.id || '' })); }}>Ajouter produit racine</Button><Button variant="secondary" onClick={() => setCatalogActionModal('create_root_brand')}>Créer brand racine</Button></>}</div>
         {filtered.business_units.length === 0 && <p>Mode sans BU: racine → brands racine + produits racine.</p>}
         {filtered.business_units.length > 0 && <p>Mode avec BU: racine → BU → brands/produits.</p>}
       </>}
@@ -188,6 +218,12 @@ export const LaboratoriesPage = () => {
         <Button variant="ghost" type="button" onClick={closeCatalogByCancel}>Annuler</Button>
         <Button type="button" onClick={closeCatalogBySave}>Enregistrer</Button>
       </div>
+    </Card></div>}
+
+    {catalogActionModal && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}><Card style={{ width: 'min(640px, 94vw)' }}>
+      <div className="toolbar"><h2>{catalogActionModal === 'create_bu' ? 'Créer une BU' : catalogActionModal === 'create_root_brand' ? 'Créer un brand racine' : 'Ajouter un produit racine'}</h2><Button variant="ghost" onClick={() => setCatalogActionModal(null)}>Fermer</Button></div>
+      {catalogActionModal !== 'create_root_product' && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value)} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => setCatalogActionModal(null)}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
+      {catalogActionModal === 'create_root_product' && <div className="grid"><Input placeholder="Désignation" value={productForm.designation} onChange={(e) => setProductForm((c) => ({ ...c, designation: e.target.value }))} /><Input placeholder="Code PCT (obligatoire pour médicament)" value={productForm.pct_code} onChange={(e) => setProductForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre" value={productForm.barcode} onChange={(e) => setProductForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={productForm.purchase_unit_price_ht} onChange={(e) => setProductForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} /><select value={productForm.nature} onChange={(e) => setProductForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></select><select value={productForm.vat_rate_id} onChange={(e) => setProductForm((c) => ({ ...c, vat_rate_id: e.target.value }))}><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => setCatalogActionModal(null)}>Annuler</Button><Button onClick={() => void submitCreateRootProduct()}>Enregistrer</Button></div></div>}
     </Card></div>}
 
   </div>);
