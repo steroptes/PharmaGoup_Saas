@@ -69,3 +69,16 @@ Tables principales (RLS activé):
 
 ### Contrats d'erreurs métier
 Les fonctions lèvent des exceptions à préfixes stables: `CATALOG_BULK_*` et `BUSINESS_UNIT_*` pour faciliter le mapping API/frontend.
+
+## Sprint 3 — Migration obligatoire 1ère BU
+- Nouvelle table `catalog_first_bu_migrations` pour piloter l'assistant backend (session, statut, signatures de revalidation, acteur, timestamps).
+- Nouveaux RPC:
+  - `create_business_unit_or_require_migration(...)`
+  - `catalog_first_bu_migration_init(...)`
+  - `catalog_first_bu_migration_preview(...)`
+  - `catalog_first_bu_migration_commit(...)`
+  - `catalog_first_bu_migration_cancel(...)`
+- Garanties:
+  - commit atomique (transaction SQL).
+  - revalidation anti-concurrence par signatures racine.
+  - journalisation dans `catalog_bulk_audit_logs`.

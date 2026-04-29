@@ -46,3 +46,59 @@
 2. Inclure uniquement BL `validated`.
 3. Agréger quantités et ST (`quantity * p_phar`).
 4. Export CSV/XLSX.
+
+## Sprint 3 livré — Wizard migration 1ère BU
+
+### Flux end-to-end
+1. `POST /labs/{labId}/business-units` appelle `create_business_unit_or_require_migration`.
+2. Si 1ère BU + contenu racine: réponse `migration_required` + inventaire (`root_products`, `root_group_brands`).
+3. UI lance `POST /labs/{labId}/catalog/migrations/first-bu/init` (`catalog_first_bu_migration_init`) pour créer la BU cible et ouvrir une session de migration.
+4. UI envoie le plan à `POST /.../preview` pour obtenir un résumé de mouvements.
+5. UI valide via `POST /.../commit` (transaction atomique all-or-nothing).
+6. Optionnel: `POST /.../cancel` supprime la BU créée pendant init et annule la session.
+
+### Diagramme d'états
+- **Avant**: `no_bu` + (`root_products|root_group_brands` possibles).
+- **Pendant**: `migration_initialized` (session active, BU créée, plan en préparation).
+- **Après succès**: `migration_committed` + `has_bu` + `root_products=0` + `root_group_brands=0`.
+- **Après annulation**: `migration_cancelled` + retour à l'état avant init.
+
+### Contrats API
+- `POST /labs/{labId}/business-units`
+  - `status=created` ou `status=migration_required`.
+- `POST /labs/{labId}/catalog/migrations/first-bu/init`
+  - Retourne `migration_id`, `business_unit_id`, inventaire figé.
+- `POST /labs/{labId}/catalog/migrations/first-bu/preview`
+  - Retourne `preview_ready`, compte des mouvements.
+- `POST /labs/{labId}/catalog/migrations/first-bu/commit`
+  - Retourne résumé détaillé (`moved_products`, `moved_group_brands`, `created_brands`).
+- `POST /labs/{labId}/catalog/migrations/first-bu/cancel`
+  - Retourne `cancelled`.
+
+### Exemples payload/réponses
+- Commit plan (exemple):
+```json
+{
+  "products": [
+    {"product_id": "...", "target_type": "business_unit"},
+    {"product_id": "...", "target_type": "existing_brand", "target_group_brand_id": "..."}
+  ],
+  "group_brands": [
+    {"group_brand_id": "...", "target_type": "business_unit"}
+  ]
+}
+```
+- Erreurs métier structurées:
+  - `MIGRATION_INVALID_DESTINATION`
+  - `MIGRATION_PRODUCT_NOT_FOUND` / `MIGRATION_BRAND_NOT_FOUND`
+  - `MIGRATION_PLAN_STALE`
+  - `MIGRATION_STRUCTURE_VIOLATION`
+
+### Transaction & concurrence
+- Commit implémenté en fonction SQL transactionnelle (rollback natif en cas d'exception).
+- Revalidation stricte juste avant commit via signatures d'inventaire racine (`root_products_signature`, `root_group_brands_signature`).
+- Session active unique par labo (`idx_catalog_first_bu_migrations_lab_active`).
+
+### Limites connues / dette Sprint 4
+- Le backend est prêt, mais l'orchestration UI wizard complète reste à implémenter (Sprint 4).
+- Le preview valide le volume et l'état de session, mais la validation fine UX des plans est à enrichir côté interface.
