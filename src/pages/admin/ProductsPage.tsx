@@ -109,7 +109,7 @@ export const ProductsPage = () => {
 
   return <div className="grid">{/* shortened intentionally */}
     <Card><h1>Produits</h1><p>Tableau des produits avec actions d’archivage et d’édition.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
-    <Card>
+    <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
       <div className="toolbar"><h2>Catalogue</h2><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
         <Input placeholder="Rechercher par désignation, code PCT ou code à barre" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} />
@@ -117,7 +117,7 @@ export const ProductsPage = () => {
       </div>
       {isLoading && <p>Chargement...</p>}
       {!isLoading && paginatedProducts.length === 0 && <p>Aucun produit trouvé.</p>}
-      {!isLoading && paginatedProducts.length > 0 && <div style={{ overflowX: 'auto', width: '100%', marginTop: 12 }}>
+      {!isLoading && paginatedProducts.length > 0 && <div style={{ overflow: 'auto', width: '100%', marginTop: 12, flex: 1 }}>
         <Table>
           <TableHead><TableRow><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Statut</TableHeaderCell><TableHeaderCell /></TableRow></TableHead>
           <TableBody>

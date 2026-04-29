@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -28,9 +28,9 @@ export const ActionDropdown = ({ actions, ariaLabel = 'Actions' }: { actions: Dr
         <MoreHorizontal size={16} />
       </Button>
       {open && (
-        <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', minWidth: 170, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 6px 20px rgba(15,23,42,0.12)', padding: 6, zIndex: 30 }}>
+        <div className="ui-dropdown-menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', minWidth: 170, zIndex: 30 }}>
           {actions.map((action) => (
-            <button key={action.label} type="button" disabled={action.disabled} onClick={() => { action.onClick(); setOpen(false); }} style={{ display: 'flex', width: '100%', border: 'none', background: 'transparent', textAlign: 'left', padding: '8px 10px', borderRadius: 8, cursor: action.disabled ? 'not-allowed' : 'pointer', opacity: action.disabled ? 0.5 : 1 }}>
+            <button key={action.label} className="ui-dropdown-item" type="button" disabled={action.disabled} onClick={() => { action.onClick(); setOpen(false); }} style={{ cursor: action.disabled ? 'not-allowed' : 'pointer', opacity: action.disabled ? 0.5 : 1 }}>
               {action.label}
             </button>
           ))}
