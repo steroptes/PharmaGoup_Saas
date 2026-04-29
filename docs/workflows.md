@@ -102,3 +102,32 @@
 ### Limites connues / dette Sprint 4
 - Le backend est prêt, mais l'orchestration UI wizard complète reste à implémenter (Sprint 4).
 - Le preview valide le volume et l'état de session, mais la validation fine UX des plans est à enrichir côté interface.
+
+## Sprint 4 livré – UI catalogue fiche laboratoire
+
+### Parcours utilisateur
+- Depuis **Admin > Laboratoires**, l'utilisateur ouvre un laboratoire puis consulte la section **Catalogue laboratoire hiérarchique**.
+- Le catalogue supporte 2 modes: sans BU (racine avec brands/produits racine) et avec BU (racine > BU > brands/produits).
+- Une recherche locale permet de filtrer par nom de BU/brand/produit.
+- L'action **Créer BU** déclenche le flux first-BU. Si migration requise, la preview et le commit de migration sont enchaînés côté UI.
+
+### Mapping UI ↔ API endpoints
+- Lecture arborescence: `get_laboratory_catalog_tree`.
+- Création BU: `create_business_unit_or_require_migration`.
+- Wizard migration première BU: `catalog_first_bu_migration_init`, `catalog_first_bu_migration_preview`, `catalog_first_bu_migration_commit`.
+- Actions bulk (branchées côté services): `catalog_products_bulk_move`, `catalog_products_bulk_delete`, `catalog_group_brands_bulk_move`, `catalog_group_brands_bulk_delete`.
+- Suppression BU: `delete_business_unit`.
+
+### Règles d’activation/désactivation des actions
+- Si une BU existe, les actions racine produit/brand sont cachées.
+- La création de BU est toujours visible à la racine.
+- La migration first-BU n'est déclenchée que quand l'API retourne `migration_required`.
+
+### Gestion des erreurs et confirmations
+- Les erreurs API sont affichées dans la zone de feedback de la page.
+- Le commit de migration est explicitement confirmé via une confirmation UI.
+
+### Limites connues / améliorations futures
+- Les composants dédiés (TreeNode, SelectionBar, MoveDialog, DeleteDialog, MigrationWizard) restent à extraire pour mutualisation.
+- Les actions contextuelles détaillées par nœud et l’accessibilité clavier complète doivent être enrichies au sprint suivant.
+- Captures d'écran non incluses dans cet environnement CLI.
