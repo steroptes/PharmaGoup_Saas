@@ -142,6 +142,11 @@ export const ProductsPage = () => {
     const errors: string[] = [];
     const parsedRows: ImportRow[] = [];
     const anomalies: ImportAnomalyRow[] = [];
+    const rowErrors = new Map<number, string[]>();
+    const pushRowError = (line: number, message: string) => {
+      errors.push(`Ligne ${line}: ${message}`);
+      rowErrors.set(line, [...(rowErrors.get(line) ?? []), message]);
+    };
     raw.forEach((row, index) => {
       const line = index + 2;
       const designation = String(row.designation || '').trim();
@@ -155,18 +160,18 @@ export const ProductsPage = () => {
       const vatRate = vatRates.find((v) => v.label.toLowerCase() === vatRateLabel.toLowerCase());
       const laboratory = laboratories.find((l) => l.designation.toLowerCase() === laboratoryDesignation.toLowerCase());
 
-      if (!designation) errors.push(`Ligne ${line}: designation obligatoire.`);
-      if (nature !== 'medicament' && nature !== 'para') errors.push(`Ligne ${line}: nature invalide (medicament|para).`);
-      if (nature === 'medicament' && !pctCode) errors.push(`Ligne ${line}: pct_code obligatoire pour médicament.`);
-      if (!Number.isFinite(price) || price < 0) errors.push(`Ligne ${line}: purchase_unit_price_ht invalide.`);
-      if (!vatRate) errors.push(`Ligne ${line}: vat_rate_label introuvable (${vatRateLabel}).`);
-      if (!laboratory) errors.push(`Ligne ${line}: laboratory_designation introuvable (${laboratoryDesignation}).`);
+      if (!designation) pushRowError(line, 'designation obligatoire.');
+      if (nature !== 'medicament' && nature !== 'para') pushRowError(line, 'nature invalide (medicament|para).');
+      if (nature === 'medicament' && !pctCode) pushRowError(line, 'pct_code obligatoire pour médicament.');
+      if (!Number.isFinite(price) || price < 0) pushRowError(line, 'purchase_unit_price_ht invalide.');
+      if (!vatRate) pushRowError(line, `vat_rate_label introuvable (${vatRateLabel}).`);
+      if (!laboratory) pushRowError(line, `laboratory_designation introuvable (${laboratoryDesignation}).`);
 
-      const lineErrors = errors.filter((e) => e.includes(`Ligne ${line}:`));
+      const lineErrors = rowErrors.get(line) ?? [];
       if (!lineErrors.length) {
         parsedRows.push({ row_number: line, designation, nature: nature as ProductNature, pct_code: pctCode, barcode, purchase_unit_price_ht: price, vat_rate_id: vatRate!.id, vat_rate_label: vatRate!.label, laboratory_id: laboratory!.id, laboratory_designation: laboratory!.designation });
       } else {
-        anomalies.push({ row_number: line, designation, nature, pct_code: pctCode, barcode, purchase_unit_price_ht: String(row.purchase_unit_price_ht || ''), vat_rate_label: vatRateLabel, laboratory_designation: laboratoryDesignation, errors: lineErrors.map((e) => e.replace(`Ligne ${line}: `, '')) });
+        anomalies.push({ row_number: line, designation, nature, pct_code: pctCode, barcode, purchase_unit_price_ht: String(row.purchase_unit_price_ht || ''), vat_rate_label: vatRateLabel, laboratory_designation: laboratoryDesignation, errors: lineErrors });
       }
     });
 
@@ -177,7 +182,7 @@ export const ProductsPage = () => {
       if (row.pct_code) {
         const pct = row.pct_code.toLowerCase();
         if (seenPct.has(pct)) {
-          errors.push(`Ligne ${line}: pct_code en doublon dans le fichier (déjà vu ligne ${seenPct.get(pct)}).`);
+          pushRowError(line, `pct_code en doublon dans le fichier (déjà vu ligne ${seenPct.get(pct)}).`);
         } else {
           seenPct.set(pct, line);
         }
@@ -185,7 +190,7 @@ export const ProductsPage = () => {
       if (row.barcode) {
         const barcode = row.barcode.toLowerCase();
         if (seenBarcode.has(barcode)) {
-          errors.push(`Ligne ${line}: barcode en doublon dans le fichier (déjà vu ligne ${seenBarcode.get(barcode)}).`);
+          pushRowError(line, `barcode en doublon dans le fichier (déjà vu ligne ${seenBarcode.get(barcode)}).`);
         } else {
           seenBarcode.set(barcode, line);
         }
@@ -197,17 +202,32 @@ export const ProductsPage = () => {
     parsedRows.forEach((row, idx) => {
       const line = idx + 2;
       if (row.pct_code && existingPct.has(row.pct_code.toLowerCase())) {
-        errors.push(`Ligne ${line}: pct_code déjà existant dans le catalogue.`);
+        pushRowError(line, 'pct_code déjà existant dans le catalogue.');
       }
       if (row.barcode && existingBarcode.has(row.barcode.toLowerCase())) {
-        errors.push(`Ligne ${line}: barcode déjà existant dans le catalogue.`);
+        pushRowError(line, 'barcode déjà existant dans le catalogue.');
       }
     });
 
+    const validRows = parsedRows.filter((row) => !rowErrors.has(row.row_number));
+    const duplicateAnomalies = parsedRows
+      .filter((row) => rowErrors.has(row.row_number))
+      .map((row) => ({
+        row_number: row.row_number,
+        designation: row.designation,
+        nature: row.nature,
+        pct_code: row.pct_code,
+        barcode: row.barcode,
+        purchase_unit_price_ht: String(row.purchase_unit_price_ht),
+        vat_rate_label: row.vat_rate_label,
+        laboratory_designation: row.laboratory_designation,
+        errors: rowErrors.get(row.row_number) ?? [],
+      }));
+
     setImportErrors(errors);
-    setImportRows(parsedRows);
-    setAnomalyRows(anomalies);
-    setActiveImportTab(anomalies.length ? 'anomalies' : 'entries');
+    setImportRows(validRows);
+    setAnomalyRows([...anomalies, ...duplicateAnomalies].sort((a, b) => a.row_number - b.row_number));
+    setActiveImportTab((anomalies.length + duplicateAnomalies.length) ? 'anomalies' : 'entries');
     setIsImportModalOpen(true);
     event.target.value = '';
   };
