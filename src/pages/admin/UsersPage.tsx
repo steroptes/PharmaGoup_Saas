@@ -8,38 +8,30 @@ import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } fro
 import { supabase } from '@/lib/supabase';
 
 type UserRow = {
-  id: string;
-  full_name: string;
-  role: 'admin' | 'pharmacy_user';
-  pharmacy_id: string | null;
+  user_id: string;
+  email: string | null;
+  email_confirmed_at: string | null;
   created_at: string;
+  full_name: string | null;
+  role: 'admin' | 'pharmacy_user' | null;
+  pharmacy_id: string | null;
+  pharmacy_name: string | null;
   is_banned: boolean;
-  pharmacies: { name: string | null }[] | null;
 };
 
 export const UsersPage = () => {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | UserRow['role']>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'pharmacy_user' | 'unknown'>('all');
   const [banFilter, setBanFilter] = useState<'all' | 'banned' | 'active'>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-
-  const resetFilters = () => {
-    setSearch('');
-    setRoleFilter('all');
-    setBanFilter('all');
-  };
 
   const loadUsers = async () => {
     setIsLoading(true);
     setError(null);
 
-    const { data, error: queryError } = await supabase
-      .from('profiles')
-      .select('id, full_name, role, pharmacy_id, created_at, is_banned, pharmacies(name)')
-      .order('created_at', { ascending: false });
+    const { data, error: queryError } = await supabase.rpc('admin_list_users');
 
     if (queryError) {
       setError(queryError.message);
@@ -58,74 +50,66 @@ export const UsersPage = () => {
 
   const filteredUsers = useMemo(() => users.filter((user) => {
     const query = search.trim().toLowerCase();
-    const roleName = user.role === 'admin' ? 'admin' : 'pharmacie';
-    const pharmacyName = user.pharmacies?.[0]?.name?.toLowerCase() ?? '';
+    const roleName = user.role ?? 'unknown';
     const matchesSearch = !query
-      || user.full_name.toLowerCase().includes(query)
-      || user.id.toLowerCase().includes(query)
-      || roleName.includes(query)
-      || pharmacyName.includes(query);
+      || (user.full_name ?? '').toLowerCase().includes(query)
+      || (user.email ?? '').toLowerCase().includes(query)
+      || user.user_id.toLowerCase().includes(query)
+      || (user.pharmacy_name ?? '').toLowerCase().includes(query);
 
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
+    const matchesRole = roleFilter === 'all'
+      || (roleFilter === 'unknown' && !user.role)
+      || user.role === roleFilter;
     const matchesBanStatus = banFilter === 'all'
       || (banFilter === 'banned' && user.is_banned)
       || (banFilter === 'active' && !user.is_banned);
 
-    return matchesSearch && matchesRole && matchesBanStatus;
+    return matchesSearch && matchesRole && matchesBanStatus && !!roleName;
   }), [users, search, roleFilter, banFilter]);
 
   const toggleBan = async (user: UserRow) => {
-    setActionMessage(null);
+    if (!user.role) return;
+
     const { error: updateError } = await supabase
       .from('profiles')
       .update({ is_banned: !user.is_banned })
-      .eq('id', user.id);
+      .eq('id', user.user_id);
 
-    if (updateError) {
-      setActionMessage(`Erreur bannissement: ${(updateError as PostgrestError).message}`);
-      return;
-    }
-
-    setActionMessage(`Compte ${user.full_name} ${user.is_banned ? 'débanni' : 'banni'} avec succès.`);
-    await loadUsers();
+    if (!updateError) await loadUsers();
   };
 
   const deleteUser = async (user: UserRow) => {
-    setActionMessage(null);
+    if (!user.role) return;
+
     const { error: deleteError } = await supabase
       .from('profiles')
       .delete()
-      .eq('id', user.id);
+      .eq('id', user.user_id);
 
-    if (deleteError) {
-      setActionMessage(`Erreur suppression: ${(deleteError as PostgrestError).message}`);
-      return;
-    }
-
-    setActionMessage(`Profil ${user.full_name} supprimé.`);
-    await loadUsers();
+    if (!deleteError) await loadUsers();
   };
 
   return (
     <div className="grid">
       <Card>
         <h1>Gestion des utilisateurs</h1>
-        <p>Module connecté à Supabase (table `profiles`) pour lister, filtrer et administrer les comptes.</p>
+        <p>Module connecté à Supabase via RPC `admin_list_users` (auth.users + profiles).</p>
       </Card>
 
       <Card className="grid">
         <div className="grid-2">
           <label>
             Recherche
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom, id, pharmacie..." />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom, email, id, pharmacie..." />
           </label>
 
           <label>
             Rôle
-            <Select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as 'all' | UserRow['role'])}>
+            <Select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as 'all' | 'admin' | 'pharmacy_user' | 'unknown')}>
               <option value="all">Tous les rôles</option>
               <option value="admin">Administrateurs</option>
               <option value="pharmacy_user">Utilisateurs pharmacie</option>
+              <option value="unknown">Sans profil</option>
             </Select>
           </label>
 
@@ -142,17 +126,7 @@ export const UsersPage = () => {
 
       <Card>
         {error && <div className="alert">Erreur chargement utilisateurs: {error}</div>}
-        {actionMessage && <div className="alert">{actionMessage}</div>}
         <p>{isLoading ? 'Chargement...' : `${filteredUsers.length} utilisateur(s) trouvé(s) sur ${users.length}`}</p>
-
-        {!isLoading && !error && users.length > 0 && filteredUsers.length === 0 && (
-          <div className="alert">
-            Aucun résultat avec les filtres actuels. Vérifiez le filtre Rôle (actuellement: {roleFilter === 'all' ? 'Tous les rôles' : roleFilter}).
-            <div style={{ marginTop: '0.5rem' }}>
-              <Button variant="secondary" onClick={resetFilters}>Réinitialiser les filtres</Button>
-            </div>
-          </div>
-        )}
 
         <Table>
           <TableHead>
@@ -161,6 +135,7 @@ export const UsersPage = () => {
               <TableHeaderCell>Rôle</TableHeaderCell>
               <TableHeaderCell>Pharmacie</TableHeaderCell>
               <TableHeaderCell>Email</TableHeaderCell>
+              <TableHeaderCell>Email confirmé</TableHeaderCell>
               <TableHeaderCell>Création</TableHeaderCell>
               <TableHeaderCell>Statut</TableHeaderCell>
               <TableHeaderCell>Actions</TableHeaderCell>
@@ -168,15 +143,16 @@ export const UsersPage = () => {
           </TableHead>
           <TableBody>
             {filteredUsers.map((user) => (
-              <TableRow key={user.id}>
+              <TableRow key={user.user_id}>
                 <TableCell>
-                  <strong>{user.full_name}</strong>
+                  <strong>{user.full_name ?? 'Profil manquant'}</strong>
                   <br />
-                  <small>{user.id}</small>
+                  <small>{user.user_id}</small>
                 </TableCell>
-                <TableCell>{user.role === 'admin' ? 'Admin' : 'Pharmacie'}</TableCell>
-                <TableCell>{user.pharmacies?.[0]?.name ?? '—'}</TableCell>
-                <TableCell>Stocké uniquement dans auth.users</TableCell>
+                <TableCell>{user.role === 'admin' ? 'Admin' : user.role === 'pharmacy_user' ? 'Pharmacie' : 'Sans profil'}</TableCell>
+                <TableCell>{user.pharmacy_name ?? '—'}</TableCell>
+                <TableCell>{user.email ?? '—'}</TableCell>
+                <TableCell>{user.email_confirmed_at ? 'Oui' : 'Non'}</TableCell>
                 <TableCell>{new Date(user.created_at).toLocaleDateString('fr-FR')}</TableCell>
                 <TableCell>
                   <Badge className={user.is_banned ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}>
@@ -185,11 +161,10 @@ export const UsersPage = () => {
                 </TableCell>
                 <TableCell>
                   <div className="actions">
-                    <Button variant="secondary" disabled>Modifier</Button>
-                    <Button variant="secondary" disabled>Relancer email</Button>
-                    <Button variant="secondary" disabled>Réinit. mot de passe</Button>
-                    <Button variant="danger" onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
-                    <Button variant="danger" onClick={() => void deleteUser(user)}>Supprimer</Button>
+                    <Button variant="secondary" disabled={!user.email}>Relancer email</Button>
+                    <Button variant="secondary" disabled={!user.email}>Réinit. mot de passe</Button>
+                    <Button variant="danger" disabled={!user.role} onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
+                    <Button variant="danger" disabled={!user.role} onClick={() => void deleteUser(user)}>Supprimer profil</Button>
                   </div>
                 </TableCell>
               </TableRow>
