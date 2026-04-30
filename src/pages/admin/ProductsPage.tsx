@@ -77,6 +77,8 @@ export const ProductsPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [pendingDeletion, setPendingDeletion] = useState<{ ids: string[]; label: string } | null>(null);
+  const [isDeletingSelection, setIsDeletingSelection] = useState(false);
   const [laboratoryFilter, setLaboratoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -366,22 +368,20 @@ export const ProductsPage = () => {
   };
 
 
-  const deleteOneProduct = async (product: ManagedProduct) => {
-    if (!window.confirm(`Supprimer le produit "${product.designation}" ?`)) return;
-    try {
-      await deleteManagedProduct(product.id);
-      setProducts((current) => current.filter((item) => item.id !== product.id));
-      setFeedback('Produit supprimé.');
-    } catch (error) {
-      setFeedback(getFriendlyProductError(error));
-    }
+  const deleteOneProduct = (product: ManagedProduct) => {
+    setPendingDeletion({ ids: [product.id], label: product.designation });
   };
 
-  const deleteSelectedProducts = async () => {
+  const askDeleteSelectedProducts = () => {
     if (!selectedProductIds.length) return;
-    if (!window.confirm(`Supprimer ${selectedProductIds.length} produit(s) sélectionné(s) ?`)) return;
+    setPendingDeletion({ ids: selectedProductIds, label: `${selectedProductIds.length} produit(s) sélectionné(s)` });
+  };
 
-    const selectedProducts = products.filter((item) => selectedProductIds.includes(item.id));
+  const confirmDeletion = async () => {
+    if (!pendingDeletion || isDeletingSelection) return;
+    setIsDeletingSelection(true);
+
+    const selectedProducts = products.filter((item) => pendingDeletion.ids.includes(item.id));
     const deletedIds: string[] = [];
     const deletionErrors: string[] = [];
 
@@ -405,6 +405,8 @@ export const ProductsPage = () => {
     }
 
     setSelectedProductIds((current) => current.filter((id) => !deletedIds.includes(id)));
+    setPendingDeletion(null);
+    setIsDeletingSelection(false);
   };
   const toggleArchive = async (product: ManagedProduct) => {
     try {
@@ -417,7 +419,7 @@ export const ProductsPage = () => {
   return <div className="grid" data-selected-count={selectedProductIds.length}>{/* shortened intentionally */}
     <Card><h1>Produits</h1><p>Tableau des produits avec actions d’archivage et d’édition.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
     <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
-      <div className="toolbar"><h2>Index</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button variant="secondary" disabled={!selectedProductIds.length} onClick={() => void deleteSelectedProducts()}>Supprimer la sélection ({selectedProductIds.length})</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
+      <div className="toolbar"><h2>Index</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button variant="secondary" disabled={!selectedProductIds.length} onClick={askDeleteSelectedProducts}>Supprimer la sélection ({selectedProductIds.length})</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={(e) => void parseImportFile(e)} style={{ display: 'none' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
         <Input placeholder="Rechercher par désignation, code PCT ou code à barre" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} />
@@ -434,7 +436,7 @@ export const ProductsPage = () => {
             });
           }} /></TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Statut</TableHeaderCell><TableHeaderCell /></TableRow></TableHead>
           <TableBody>
-            {paginatedProducts.map((p) => <TableRow key={p.id}><TableCell><input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={(e) => setSelectedProductIds((current) => e.target.checked ? [...current, p.id] : current.filter((id) => id !== p.id))} /></TableCell><TableCell>{p.designation}</TableCell><TableCell>{p.nature}</TableCell><TableCell>{p.pct_code || '-'}</TableCell><TableCell>{p.barcode}</TableCell><TableCell>{p.purchase_unit_price_ht}</TableCell><TableCell>{p.vat_rate?.label || '-'}</TableCell><TableCell>{p.laboratory?.designation || '-'}</TableCell><TableCell>{p.is_active ? 'Actif' : 'Archivé'}</TableCell><TableCell><ActionDropdown actions={[{ label: 'Modifier', onClick: () => openEditModal(p) }, { label: p.is_active ? 'Archiver' : 'Réactiver', onClick: () => void toggleArchive(p) }, { label: 'Supprimer', onClick: () => void deleteOneProduct(p) }]} /></TableCell></TableRow>)}
+            {paginatedProducts.map((p) => <TableRow key={p.id}><TableCell><input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={(e) => setSelectedProductIds((current) => e.target.checked ? [...current, p.id] : current.filter((id) => id !== p.id))} /></TableCell><TableCell>{p.designation}</TableCell><TableCell>{p.nature}</TableCell><TableCell>{p.pct_code || '-'}</TableCell><TableCell>{p.barcode}</TableCell><TableCell>{p.purchase_unit_price_ht}</TableCell><TableCell>{p.vat_rate?.label || '-'}</TableCell><TableCell>{p.laboratory?.designation || '-'}</TableCell><TableCell>{p.is_active ? 'Actif' : 'Archivé'}</TableCell><TableCell><ActionDropdown actions={[{ label: 'Modifier', onClick: () => openEditModal(p) }, { label: p.is_active ? 'Archiver' : 'Réactiver', onClick: () => void toggleArchive(p) }, { label: 'Supprimer', onClick: () => deleteOneProduct(p) }]} /></TableCell></TableRow>)}
           </TableBody>
         </Table>
       </div>}
@@ -446,5 +448,7 @@ export const ProductsPage = () => {
     {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1200px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Button variant="secondary" style={{ background: activeImportTab === 'entries' ? '#0f172a' : undefined, color: activeImportTab === 'entries' ? '#fff' : undefined }} onClick={() => setActiveImportTab('entries')}>Liste des entrées ({importRows.length})</Button><Button variant="secondary" style={{ background: activeImportTab === 'anomalies' ? '#0f172a' : undefined, color: activeImportTab === 'anomalies' ? '#fff' : undefined }} onClick={() => setActiveImportTab('anomalies')}>Anomalies ({anomalyRows.length})</Button></div>{activeImportTab === 'entries' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row) => <TableRow key={`valid-${row.row_number}`}><TableCell>{row.row_number}</TableCell><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div>}{activeImportTab === 'anomalies' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Erreurs</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{anomalyRows.map((row) => <TableRow key={`anomaly-${row.row_number}`}><TableCell>{row.row_number}</TableCell>{(['designation', 'nature', 'pct_code', 'barcode', 'purchase_unit_price_ht', 'vat_rate_label', 'laboratory_designation'] as EditableAnomalyField[]).map((field) => <TableCell key={`${row.row_number}-${field}`}>{editingCell?.row === row.row_number && editingCell.field === field ? <Input autoFocus value={String(row[field])} onBlur={() => setEditingCell(null)} onChange={(e) => setAnomalyField(row.row_number, field, e.target.value)} /> : <button type="button" onClick={() => setEditingCell({ row: row.row_number, field })} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', width: '100%' }}>{String(row[field]) || '-'}</button>}</TableCell>)}<TableCell><ul style={{ margin: 0, paddingLeft: 18, color: '#b42318' }}>{row.errors.map((err) => <li key={`${row.row_number}-${err}`}>{err}</li>)}</ul></TableCell><TableCell><Button variant="secondary" onClick={() => { const updated = revalidateAnomalyRow(row); if (updated) setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? updated : r)); }}>Vérifier</Button></TableCell></TableRow>)}</TableBody></Table></div>}<div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importRows.length === 0 || anomalyRows.length > 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
     <div style={{ position: 'fixed', top: 20, right: 20, display: 'grid', gap: 10, zIndex: 60 }}>{toasts.map((toast) => <Card key={toast.id} style={{ width: 360, border: '1px solid #fda29b', background: '#fef3f2' }}><strong style={{ color: '#b42318' }}>{toast.title}</strong><ul style={{ margin: '8px 0 0', paddingLeft: 18, color: '#b42318' }}>{toast.lines.map((line) => <li key={`${toast.id}-${line}`}>{line}</li>)}</ul></Card>)}</div>
     {isModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}><Card><div className="toolbar"><h2>{editingId ? 'Modifier le produit' : 'Ajouter un produit'}</h2><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button></div><form className="grid" onSubmit={handleSubmit}><Input placeholder="Désignation" value={form.designation} onChange={(e) => setForm((c) => ({ ...c, designation: e.target.value }))} required /><Select value={form.nature} onChange={(e) => setForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></Select><Input placeholder="Code PCT (obligatoire pour médicament)" value={form.pct_code} onChange={(e) => setForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre (vide = PCT ou génération auto)" value={form.barcode} onChange={(e) => setForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={form.purchase_unit_price_ht} onChange={(e) => setForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} required /><Select value={form.vat_rate_id} onChange={(e) => setForm((c) => ({ ...c, vat_rate_id: e.target.value }))} required><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</Select><Select value={form.laboratory_id} onChange={(e) => setForm((c) => ({ ...c, laboratory_id: e.target.value }))} required><option value="" disabled>Sélectionner un laboratoire</option>{laboratories.map((l) => <option key={l.id} value={l.id}>{l.designation}</option>)}</Select>{fieldError && <p style={{ color: '#b42318' }}>{fieldError}</p>}<Button type="submit" disabled={isSaving}>{actionLabel}</Button></form></Card></div>}
+
+    {pendingDeletion && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', zIndex: 70 }}><Card style={{ width: 'min(560px, 92vw)' }}><h2>Confirmer la suppression</h2><p style={{ marginTop: 8 }}>Vous êtes sur le point de supprimer <strong>{pendingDeletion.label}</strong>.</p><p style={{ color: '#b42318', marginTop: 8, fontWeight: 600 }}>Cette opération est irréversible.</p><p style={{ marginTop: 8, color: '#475467' }}>Les produits liés à des campagnes ne seront pas supprimés et seront listés dans un toast d’erreur.</p><div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setPendingDeletion(null)} disabled={isDeletingSelection}>Annuler</Button><Button onClick={() => void confirmDeletion()} disabled={isDeletingSelection}>{isDeletingSelection ? 'Suppression en cours...' : 'Supprimer définitivement'}</Button></div></Card></div>}
   </div>;
 };
