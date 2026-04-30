@@ -45,11 +45,27 @@ export const listVatRates = async () => {
 export const listManagedProducts = async () => {
   const { data, error } = await supabase
     .from('managed_products')
-    .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
+    .select('*')
     .order('designation', { ascending: true });
 
   if (error) throw error;
-  return (data ?? []) as ManagedProduct[];
+  const products = (data ?? []) as ManagedProduct[];
+  if (!products.length) return [];
+
+  const [vatRes, labsRes] = await Promise.all([
+    supabase.from('vat_rates').select('id, label, rate'),
+    supabase.from('laboratories').select('id, designation'),
+  ]);
+  if (vatRes.error) throw vatRes.error;
+  if (labsRes.error) throw labsRes.error;
+
+  const vatById = new Map((vatRes.data ?? []).map((v) => [v.id, v]));
+  const labById = new Map((labsRes.data ?? []).map((l) => [l.id, l]));
+  return products.map((product) => ({
+    ...product,
+    vat_rate: vatById.get(product.vat_rate_id),
+    laboratory: labById.get(product.laboratory_id),
+  }));
 };
 
 const normalizePayload = (payload: ManagedProductInput) => {
@@ -74,7 +90,7 @@ export const createManagedProduct = async (payload: ManagedProductInput) => {
   const { data, error } = await supabase
     .from('managed_products')
     .insert(normalizePayload(payload))
-    .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
+    .select('*')
     .single();
 
   if (error) throw error;
@@ -86,7 +102,7 @@ export const updateManagedProduct = async (id: string, payload: ManagedProductIn
     .from('managed_products')
     .update(normalizePayload(payload))
     .eq('id', id)
-    .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
+    .select('*')
     .single();
 
   if (error) throw error;
@@ -98,7 +114,7 @@ export const setManagedProductArchived = async (id: string, archived: boolean) =
     .from('managed_products')
     .update({ is_active: !archived })
     .eq('id', id)
-    .select('*, vat_rate:vat_rates(id, label, rate), laboratory:laboratories(id, designation)')
+    .select('*')
     .single();
 
   if (error) throw error;
