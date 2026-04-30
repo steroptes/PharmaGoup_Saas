@@ -36,9 +36,9 @@ a {
   border-right: 1px solid #e2e8f0;
   color: #0f172a;
   padding: 1.25rem;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
-  align-content: start;
 }
 
 .sidebar nav {
@@ -57,6 +57,43 @@ a {
   background: #f1f5f9;
   color: #0f172a;
 }
+
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.sidebar-role-badge {
+  padding-top: 1.8rem;
+}
+
+.sidebar-divider {
+  border: 0;
+  border-top: 1px solid #e2e8f0;
+  margin: 0.4rem 0;
+}
+
+.sidebar-settings-link {
+  color: #334155;
+  text-decoration: none;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+}
+
+.sidebar-settings-link:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  display: grid;
+  gap: 0.5rem;
+}
+
 
 .main {
   padding: 1.25rem;
