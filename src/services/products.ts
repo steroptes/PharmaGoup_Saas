@@ -19,6 +19,8 @@ export interface ManagedProduct {
   vat_rate_id: string;
   laboratory_id: string;
   is_active: boolean;
+  business_unit_id: string | null;
+  group_brand_id: string | null;
   vat_rate?: Pick<VatRate, 'id' | 'label' | 'rate'>;
   laboratory?: { id: string; designation: string };
   created_at: string;
