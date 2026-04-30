@@ -122,6 +122,33 @@ export const setManagedProductArchived = async (id: string, archived: boolean) =
 };
 
 export const deleteManagedProduct = async (id: string) => {
+  const { count, error: linkedError } = await supabase
+    .from('campaign_products')
+    .select('id', { count: 'exact', head: true })
+    .eq('product_id', id);
+
+  if (linkedError) throw linkedError;
+  if ((count ?? 0) > 0) {
+    throw new Error('Suppression impossible: ce produit est lié à une campagne (active ou passée).');
+  }
+
   const { error } = await supabase.from('managed_products').delete().eq('id', id);
+  if (error) throw error;
+};
+
+export const deleteManagedProducts = async (ids: string[]) => {
+  if (!ids.length) return;
+
+  const { count, error: linkedError } = await supabase
+    .from('campaign_products')
+    .select('id', { count: 'exact', head: true })
+    .in('product_id', ids);
+
+  if (linkedError) throw linkedError;
+  if ((count ?? 0) > 0) {
+    throw new Error('Suppression impossible: au moins un produit sélectionné est lié à une campagne (active ou passée).');
+  }
+
+  const { error } = await supabase.from('managed_products').delete().in('id', ids);
   if (error) throw error;
 };
