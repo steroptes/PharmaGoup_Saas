@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } fro
 import { listLaboratories, Laboratory } from '@/services/laboratories';
 import {
   createManagedProduct,
+  deleteManagedProduct,
+  deleteManagedProducts,
   listManagedProducts,
   listVatRates,
   ManagedProduct,
@@ -136,6 +138,10 @@ export const ProductsPage = () => {
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    setSelectedProductIds((current) => current.filter((id) => products.some((p) => p.id === id)));
+  }, [products]);
 
   const resetForm = () => { setForm({ ...EMPTY_FORM, vat_rate_id: vatRates[0]?.id || '', laboratory_id: laboratories[0]?.id || '' }); setEditingId(null); setFieldError(null); };
   const openCreateModal = () => { resetForm(); setIsModalOpen(true); };
@@ -351,6 +357,30 @@ export const ProductsPage = () => {
     } catch (error) { setFieldError(getFriendlyProductError(error)); } finally { setIsSaving(false); }
   };
 
+
+  const deleteOneProduct = async (product: ManagedProduct) => {
+    if (!window.confirm(`Supprimer le produit "${product.designation}" ?`)) return;
+    try {
+      await deleteManagedProduct(product.id);
+      setProducts((current) => current.filter((item) => item.id !== product.id));
+      setFeedback('Produit supprimé.');
+    } catch (error) {
+      setFeedback(getFriendlyProductError(error));
+    }
+  };
+
+  const deleteSelectedProducts = async () => {
+    if (!selectedProductIds.length) return;
+    if (!window.confirm(`Supprimer ${selectedProductIds.length} produit(s) sélectionné(s) ?`)) return;
+    try {
+      await deleteManagedProducts(selectedProductIds);
+      setProducts((current) => current.filter((item) => !selectedProductIds.includes(item.id)));
+      setSelectedProductIds([]);
+      setFeedback('Produits supprimés.');
+    } catch (error) {
+      setFeedback(getFriendlyProductError(error));
+    }
+  };
   const toggleArchive = async (product: ManagedProduct) => {
     try {
       const updated = await setManagedProductArchived(product.id, product.is_active);
@@ -372,9 +402,14 @@ export const ProductsPage = () => {
       {!isLoading && paginatedProducts.length === 0 && <p>Aucun produit trouvé.</p>}
       {!isLoading && paginatedProducts.length > 0 && <div style={{ overflow: 'auto', width: '100%', marginTop: 12, flex: 1 }}>
         <Table>
-          <TableHead><TableRow><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Statut</TableHeaderCell><TableHeaderCell /></TableRow></TableHead>
+          <TableHead><TableRow><TableHeaderCell style={{ width: 32 }}><input type="checkbox" checked={paginatedProducts.length > 0 && paginatedProducts.every((p) => selectedProductIds.includes(p.id))} onChange={(e) => {
+            setSelectedProductIds((current) => {
+              if (e.target.checked) return Array.from(new Set([...current, ...paginatedProducts.map((p) => p.id)]));
+              return current.filter((id) => !paginatedProducts.some((p) => p.id === id));
+            });
+          }} /></TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Statut</TableHeaderCell><TableHeaderCell /></TableRow></TableHead>
           <TableBody>
-            {paginatedProducts.map((p) => <TableRow key={p.id}><TableCell>{p.designation}</TableCell><TableCell>{p.nature}</TableCell><TableCell>{p.pct_code || '-'}</TableCell><TableCell>{p.barcode}</TableCell><TableCell>{p.purchase_unit_price_ht}</TableCell><TableCell>{p.vat_rate?.label || '-'}</TableCell><TableCell>{p.laboratory?.designation || '-'}</TableCell><TableCell>{p.is_active ? 'Actif' : 'Archivé'}</TableCell><TableCell><ActionDropdown actions={[{ label: 'Modifier', onClick: () => openEditModal(p) }, { label: p.is_active ? 'Archiver' : 'Réactiver', onClick: () => void toggleArchive(p) }, { label: 'Supprimer (bientôt)', onClick: () => undefined, disabled: true }]} /></TableCell></TableRow>)}
+            {paginatedProducts.map((p) => <TableRow key={p.id}><TableCell><input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={(e) => setSelectedProductIds((current) => e.target.checked ? [...current, p.id] : current.filter((id) => id !== p.id))} /></TableCell><TableCell>{p.designation}</TableCell><TableCell>{p.nature}</TableCell><TableCell>{p.pct_code || '-'}</TableCell><TableCell>{p.barcode}</TableCell><TableCell>{p.purchase_unit_price_ht}</TableCell><TableCell>{p.vat_rate?.label || '-'}</TableCell><TableCell>{p.laboratory?.designation || '-'}</TableCell><TableCell>{p.is_active ? 'Actif' : 'Archivé'}</TableCell><TableCell><ActionDropdown actions={[{ label: 'Modifier', onClick: () => openEditModal(p) }, { label: p.is_active ? 'Archiver' : 'Réactiver', onClick: () => void toggleArchive(p) }, { label: 'Supprimer', onClick: () => void deleteOneProduct(p) }]} /></TableCell></TableRow>)}
           </TableBody>
         </Table>
       </div>}
