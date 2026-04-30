@@ -23,6 +23,7 @@ const PAGE_SIZE = 8;
 const EMPTY_FORM = { designation: '', nature: 'medicament' as ProductNature, pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: '', laboratory_id: '' };
 const IMPORT_HEADERS = ['designation', 'nature', 'pct_code', 'barcode', 'purchase_unit_price_ht', 'vat_rate_label', 'laboratory_designation'];
 type ImportRow = {
+  row_number: number;
   designation: string;
   nature: ProductNature;
   pct_code: string;
@@ -32,6 +33,17 @@ type ImportRow = {
   vat_rate_label: string;
   laboratory_id: string;
   laboratory_designation: string;
+};
+type ImportAnomalyRow = {
+  row_number: number;
+  designation: string;
+  nature: string;
+  pct_code: string;
+  barcode: string;
+  purchase_unit_price_ht: string;
+  vat_rate_label: string;
+  laboratory_designation: string;
+  errors: string[];
 };
 
 const getFriendlyProductError = (error: unknown) => {
@@ -57,9 +69,10 @@ export const ProductsPage = () => {
   const [laboratoryFilter, setLaboratoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
+  const [anomalyRows, setAnomalyRows] = useState<ImportAnomalyRow[]>([]);
+  const [activeImportTab, setActiveImportTab] = useState<'entries' | 'anomalies'>('entries');
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -126,6 +139,7 @@ export const ProductsPage = () => {
 
     const errors: string[] = [];
     const parsedRows: ImportRow[] = [];
+    const anomalies: ImportAnomalyRow[] = [];
     raw.forEach((row, index) => {
       const line = index + 2;
       const designation = String(row.designation || '').trim();
@@ -146,8 +160,11 @@ export const ProductsPage = () => {
       if (!vatRate) errors.push(`Ligne ${line}: vat_rate_label introuvable (${vatRateLabel}).`);
       if (!laboratory) errors.push(`Ligne ${line}: laboratory_designation introuvable (${laboratoryDesignation}).`);
 
-      if (!errors.some((e) => e.includes(`Ligne ${line}:`))) {
-        parsedRows.push({ designation, nature: nature as ProductNature, pct_code: pctCode, barcode, purchase_unit_price_ht: price, vat_rate_id: vatRate!.id, vat_rate_label: vatRate!.label, laboratory_id: laboratory!.id, laboratory_designation: laboratory!.designation });
+      const lineErrors = errors.filter((e) => e.includes(`Ligne ${line}:`));
+      if (!lineErrors.length) {
+        parsedRows.push({ row_number: line, designation, nature: nature as ProductNature, pct_code: pctCode, barcode, purchase_unit_price_ht: price, vat_rate_id: vatRate!.id, vat_rate_label: vatRate!.label, laboratory_id: laboratory!.id, laboratory_designation: laboratory!.designation });
+      } else {
+        anomalies.push({ row_number: line, designation, nature, pct_code: pctCode, barcode, purchase_unit_price_ht: String(row.purchase_unit_price_ht || ''), vat_rate_label: vatRateLabel, laboratory_designation: laboratoryDesignation, errors: lineErrors.map((e) => e.replace(`Ligne ${line}: `, '')) });
       }
     });
 
@@ -187,12 +204,37 @@ export const ProductsPage = () => {
 
     setImportErrors(errors);
     setImportRows(parsedRows);
+    setAnomalyRows(anomalies);
+    setActiveImportTab(anomalies.length ? 'anomalies' : 'entries');
     setIsImportModalOpen(true);
     event.target.value = '';
   };
 
+  const revalidateAnomalyRow = (row: ImportAnomalyRow) => {
+    const errs: string[] = [];
+    const nature = row.nature.trim().toLowerCase();
+    const pctCode = row.pct_code.trim();
+    const barcode = row.barcode.trim();
+    const vatRate = vatRates.find((v) => v.label.toLowerCase() === row.vat_rate_label.trim().toLowerCase());
+    const laboratory = laboratories.find((l) => l.designation.toLowerCase() === row.laboratory_designation.trim().toLowerCase());
+    const price = Number(row.purchase_unit_price_ht);
+    if (!row.designation.trim()) errs.push('designation obligatoire');
+    if (nature !== 'medicament' && nature !== 'para') errs.push('nature invalide');
+    if (nature === 'medicament' && !pctCode) errs.push('pct_code obligatoire');
+    if (!Number.isFinite(price) || price < 0) errs.push('purchase_unit_price_ht invalide');
+    if (!vatRate) errs.push('vat_rate_label introuvable');
+    if (!laboratory) errs.push('laboratory_designation introuvable');
+    if (pctCode && products.some((p) => (p.pct_code || '').toLowerCase() === pctCode.toLowerCase())) errs.push('pct_code déjà existant');
+    if (barcode && products.some((p) => p.barcode.toLowerCase() === barcode.toLowerCase())) errs.push('barcode déjà existant');
+    if (errs.length) return { ...row, errors: errs };
+    const valid: ImportRow = { row_number: row.row_number, designation: row.designation.trim(), nature: nature as ProductNature, pct_code: pctCode, barcode, purchase_unit_price_ht: price, vat_rate_id: vatRate!.id, vat_rate_label: vatRate!.label, laboratory_id: laboratory!.id, laboratory_designation: laboratory!.designation };
+    setImportRows((current) => [...current, valid].sort((a, b) => a.row_number - b.row_number));
+    setAnomalyRows((current) => current.filter((a) => a.row_number !== row.row_number));
+    return null;
+  };
+
   const handleConfirmImport = async () => {
-    if (!importRows.length || importErrors.length > 0) return;
+    if (!importRows.length || anomalyRows.length > 0 || importErrors.length > 0) return;
     setIsImporting(true);
     try {
       const created: ManagedProduct[] = [];
@@ -278,7 +320,7 @@ export const ProductsPage = () => {
   return <div className="grid">{/* shortened intentionally */}
     <Card><h1>Produits</h1><p>Tableau des produits avec actions d’archivage et d’édition.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
     <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
-      <div className="toolbar"><h2>Catalogue</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button variant="danger" disabled={!selectedProductIds.length} onClick={() => void deleteSelectedProducts()}>Supprimer la sélection</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
+      <div className="toolbar"><h2>Catalogue</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={(e) => void parseImportFile(e)} style={{ display: 'none' }} />
       {importErrors.length > 0 && <div style={{ marginTop: 8, color: '#b42318' }}>{importErrors.map((err) => <p key={err}>{err}</p>)}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
@@ -305,7 +347,7 @@ export const ProductsPage = () => {
         <div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Précédent</Button><Button variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Suivant</Button></div>
       </div>
     </Card>
-    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><p>{importRows.length} ligne(s) chargée(s) pour import.</p>{importErrors.length > 0 && <div style={{ color: '#b42318', marginTop: 8 }}><p>Corrigez les erreurs suivantes avant de valider :</p>{importErrors.map((err) => <p key={err}>{err}</p>)}</div>}<div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row, idx) => <TableRow key={`${row.designation}-${idx}`}><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div><div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importErrors.length > 0 || importRows.length === 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
+    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1200px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Button variant="secondary" onClick={() => setActiveImportTab('entries')}>Liste des entrées ({importRows.length})</Button><Button variant="secondary" onClick={() => setActiveImportTab('anomalies')}>Anomalies ({anomalyRows.length})</Button></div>{activeImportTab === 'entries' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row) => <TableRow key={`valid-${row.row_number}`}><TableCell>{row.row_number}</TableCell><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div>}{activeImportTab === 'anomalies' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Erreurs</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{anomalyRows.map((row) => <TableRow key={`anomaly-${row.row_number}`}><TableCell>{row.row_number}</TableCell><TableCell><Input value={row.designation} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, designation: e.target.value } : r))} /></TableCell><TableCell><Input value={row.nature} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, nature: e.target.value } : r))} /></TableCell><TableCell><Input value={row.pct_code} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, pct_code: e.target.value } : r))} /></TableCell><TableCell><Input value={row.barcode} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, barcode: e.target.value } : r))} /></TableCell><TableCell><Input value={row.purchase_unit_price_ht} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, purchase_unit_price_ht: e.target.value } : r))} /></TableCell><TableCell><Input value={row.vat_rate_label} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, vat_rate_label: e.target.value } : r))} /></TableCell><TableCell><Input value={row.laboratory_designation} onChange={(e) => setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? { ...r, laboratory_designation: e.target.value } : r))} /></TableCell><TableCell>{row.errors.join(', ')}</TableCell><TableCell><Button variant="secondary" onClick={() => { const updated = revalidateAnomalyRow(row); if (updated) setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? updated : r)); }}>Vérifier</Button></TableCell></TableRow>)}</TableBody></Table></div>}<div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importRows.length === 0 || anomalyRows.length > 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
     {isModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}><Card><div className="toolbar"><h2>{editingId ? 'Modifier le produit' : 'Ajouter un produit'}</h2><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button></div><form className="grid" onSubmit={handleSubmit}><Input placeholder="Désignation" value={form.designation} onChange={(e) => setForm((c) => ({ ...c, designation: e.target.value }))} required /><Select value={form.nature} onChange={(e) => setForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></Select><Input placeholder="Code PCT (obligatoire pour médicament)" value={form.pct_code} onChange={(e) => setForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre (vide = PCT ou génération auto)" value={form.barcode} onChange={(e) => setForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={form.purchase_unit_price_ht} onChange={(e) => setForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} required /><Select value={form.vat_rate_id} onChange={(e) => setForm((c) => ({ ...c, vat_rate_id: e.target.value }))} required><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</Select><Select value={form.laboratory_id} onChange={(e) => setForm((c) => ({ ...c, laboratory_id: e.target.value }))} required><option value="" disabled>Sélectionner un laboratoire</option>{laboratories.map((l) => <option key={l.id} value={l.id}>{l.designation}</option>)}</Select>{fieldError && <p style={{ color: '#b42318' }}>{fieldError}</p>}<Button type="submit" disabled={isSaving}>{actionLabel}</Button></form></Card></div>}
   </div>;
 };
