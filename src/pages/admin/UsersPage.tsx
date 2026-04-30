@@ -26,6 +26,12 @@ export const UsersPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  const resetFilters = () => {
+    setSearch('');
+    setRoleFilter('all');
+    setBanFilter('all');
+  };
+
   const loadUsers = async () => {
     setIsLoading(true);
     setError(null);
@@ -137,7 +143,16 @@ export const UsersPage = () => {
       <Card>
         {error && <div className="alert">Erreur chargement utilisateurs: {error}</div>}
         {actionMessage && <div className="alert">{actionMessage}</div>}
-        <p>{isLoading ? 'Chargement...' : `${filteredUsers.length} utilisateur(s) trouvé(s)`}</p>
+        <p>{isLoading ? 'Chargement...' : `${filteredUsers.length} utilisateur(s) trouvé(s) sur ${users.length}`}</p>
+
+        {!isLoading && !error && users.length > 0 && filteredUsers.length === 0 && (
+          <div className="alert">
+            Aucun résultat avec les filtres actuels. Vérifiez le filtre Rôle (actuellement: {roleFilter === 'all' ? 'Tous les rôles' : roleFilter}).
+            <div style={{ marginTop: '0.5rem' }}>
+              <Button variant="secondary" onClick={resetFilters}>Réinitialiser les filtres</Button>
+            </div>
+          </div>
+        )}
 
         <Table>
           <TableHead>
