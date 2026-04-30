@@ -69,6 +69,8 @@ export const ProductsPage = () => {
   const [laboratoryFilter, setLaboratoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
+  // Compat guard: referenced by older selection callbacks still mounted in some client bundles.
+  const [, setSelectedProductIds] = useState<string[]>([]);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [anomalyRows, setAnomalyRows] = useState<ImportAnomalyRow[]>([]);
