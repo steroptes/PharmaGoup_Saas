@@ -1,122 +1,117 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { PostgrestError } from '@supabase/supabase-js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
-
-type UserStatus = 'active' | 'pending' | 'banned';
+import { supabase } from '@/lib/supabase';
 
 type UserRow = {
   id: string;
-  fullName: string;
-  email: string;
+  full_name: string;
   role: 'admin' | 'pharmacy_user';
-  status: UserStatus;
-  emailConfirmed: boolean;
-  createdAt: string;
-};
-
-const USERS: UserRow[] = [
-  {
-    id: 'USR-1001',
-    fullName: 'Amina El Fassi',
-    email: 'amina@pharmagroup.ma',
-    role: 'admin',
-    status: 'active',
-    emailConfirmed: true,
-    createdAt: '2026-03-15',
-  },
-  {
-    id: 'USR-1002',
-    fullName: 'Pharmacie Centrale - Casablanca',
-    email: 'contact@pharma-centrale.ma',
-    role: 'pharmacy_user',
-    status: 'pending',
-    emailConfirmed: false,
-    createdAt: '2026-04-27',
-  },
-  {
-    id: 'USR-1003',
-    fullName: 'Karim Benali',
-    email: 'karim.benali@pharmagroup.ma',
-    role: 'admin',
-    status: 'active',
-    emailConfirmed: true,
-    createdAt: '2026-02-19',
-  },
-  {
-    id: 'USR-1004',
-    fullName: 'Pharmacie Al Amal',
-    email: 'admin@alamal.ma',
-    role: 'pharmacy_user',
-    status: 'banned',
-    emailConfirmed: true,
-    createdAt: '2026-01-08',
-  },
-  {
-    id: 'USR-1005',
-    fullName: 'Nadia Ziani',
-    email: 'nadia.ziani@pharmagroup.ma',
-    role: 'admin',
-    status: 'pending',
-    emailConfirmed: false,
-    createdAt: '2026-04-29',
-  },
-];
-
-const badgeByStatus: Record<UserStatus, string> = {
-  active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  pending: 'bg-amber-50 text-amber-700 border-amber-200',
-  banned: 'bg-red-50 text-red-700 border-red-200',
-};
-
-const labelByStatus: Record<UserStatus, string> = {
-  active: 'Actif',
-  pending: 'Demande en attente',
-  banned: 'Banni',
+  pharmacy_id: string | null;
+  created_at: string;
+  is_banned: boolean;
+  pharmacies: { name: string | null }[] | null;
 };
 
 export const UsersPage = () => {
+  const [users, setUsers] = useState<UserRow[]>([]);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | UserRow['role']>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | UserStatus>('all');
-  const [emailFilter, setEmailFilter] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
+  const [banFilter, setBanFilter] = useState<'all' | 'banned' | 'active'>('all');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
-  const filteredUsers = useMemo(() => USERS.filter((user) => {
+  const loadUsers = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    const { data, error: queryError } = await supabase
+      .from('profiles')
+      .select('id, full_name, role, pharmacy_id, created_at, is_banned, pharmacies(name)')
+      .order('created_at', { ascending: false });
+
+    if (queryError) {
+      setError(queryError.message);
+      setUsers([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setUsers((data ?? []) as UserRow[]);
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
+    void loadUsers();
+  }, []);
+
+  const filteredUsers = useMemo(() => users.filter((user) => {
     const query = search.trim().toLowerCase();
+    const roleName = user.role === 'admin' ? 'admin' : 'pharmacie';
+    const pharmacyName = user.pharmacies?.[0]?.name?.toLowerCase() ?? '';
     const matchesSearch = !query
-      || user.fullName.toLowerCase().includes(query)
-      || user.email.toLowerCase().includes(query)
-      || user.id.toLowerCase().includes(query);
+      || user.full_name.toLowerCase().includes(query)
+      || user.id.toLowerCase().includes(query)
+      || roleName.includes(query)
+      || pharmacyName.includes(query);
 
     const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-    const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
-    const matchesEmail = emailFilter === 'all'
-      || (emailFilter === 'confirmed' && user.emailConfirmed)
-      || (emailFilter === 'unconfirmed' && !user.emailConfirmed);
+    const matchesBanStatus = banFilter === 'all'
+      || (banFilter === 'banned' && user.is_banned)
+      || (banFilter === 'active' && !user.is_banned);
 
-    return matchesSearch && matchesRole && matchesStatus && matchesEmail;
-  }), [search, roleFilter, statusFilter, emailFilter]);
+    return matchesSearch && matchesRole && matchesBanStatus;
+  }), [users, search, roleFilter, banFilter]);
+
+  const toggleBan = async (user: UserRow) => {
+    setActionMessage(null);
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ is_banned: !user.is_banned })
+      .eq('id', user.id);
+
+    if (updateError) {
+      setActionMessage(`Erreur bannissement: ${(updateError as PostgrestError).message}`);
+      return;
+    }
+
+    setActionMessage(`Compte ${user.full_name} ${user.is_banned ? 'débanni' : 'banni'} avec succès.`);
+    await loadUsers();
+  };
+
+  const deleteUser = async (user: UserRow) => {
+    setActionMessage(null);
+    const { error: deleteError } = await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', user.id);
+
+    if (deleteError) {
+      setActionMessage(`Erreur suppression: ${(deleteError as PostgrestError).message}`);
+      return;
+    }
+
+    setActionMessage(`Profil ${user.full_name} supprimé.`);
+    await loadUsers();
+  };
 
   return (
     <div className="grid">
       <Card>
         <h1>Gestion des utilisateurs</h1>
-        <p>
-          Module réservé aux administrateurs: consultation, filtrage, recherche et actions de gestion des comptes.
-        </p>
+        <p>Module connecté à Supabase (table `profiles`) pour lister, filtrer et administrer les comptes.</p>
       </Card>
 
       <Card className="grid">
         <div className="grid-2">
           <label>
             Recherche
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Nom, email ou identifiant..."
-            />
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom, id, pharmacie..." />
           </label>
 
           <label>
@@ -129,36 +124,30 @@ export const UsersPage = () => {
           </label>
 
           <label>
-            Statut du compte
-            <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | UserStatus)}>
-              <option value="all">Tous les statuts</option>
-              <option value="pending">Demandes en attente</option>
-              <option value="active">Comptes actifs</option>
-              <option value="banned">Comptes bannis</option>
-            </Select>
-          </label>
-
-          <label>
-            Confirmation email
-            <Select value={emailFilter} onChange={(event) => setEmailFilter(event.target.value as 'all' | 'confirmed' | 'unconfirmed')}>
+            État du compte
+            <Select value={banFilter} onChange={(event) => setBanFilter(event.target.value as 'all' | 'banned' | 'active')}>
               <option value="all">Tous</option>
-              <option value="confirmed">Email confirmé</option>
-              <option value="unconfirmed">Email non confirmé</option>
+              <option value="active">Actifs</option>
+              <option value="banned">Bannis</option>
             </Select>
           </label>
         </div>
       </Card>
 
       <Card>
-        <p>{filteredUsers.length} utilisateur(s) trouvé(s)</p>
+        {error && <div className="alert">Erreur chargement utilisateurs: {error}</div>}
+        {actionMessage && <div className="alert">{actionMessage}</div>}
+        <p>{isLoading ? 'Chargement...' : `${filteredUsers.length} utilisateur(s) trouvé(s)`}</p>
+
         <Table>
           <TableHead>
             <TableRow>
               <TableHeaderCell>Utilisateur</TableHeaderCell>
               <TableHeaderCell>Rôle</TableHeaderCell>
-              <TableHeaderCell>Statut</TableHeaderCell>
+              <TableHeaderCell>Pharmacie</TableHeaderCell>
               <TableHeaderCell>Email</TableHeaderCell>
-              <TableHeaderCell>Créé le</TableHeaderCell>
+              <TableHeaderCell>Création</TableHeaderCell>
+              <TableHeaderCell>Statut</TableHeaderCell>
               <TableHeaderCell>Actions</TableHeaderCell>
             </TableRow>
           </TableHead>
@@ -166,27 +155,26 @@ export const UsersPage = () => {
             {filteredUsers.map((user) => (
               <TableRow key={user.id}>
                 <TableCell>
-                  <strong>{user.fullName}</strong>
+                  <strong>{user.full_name}</strong>
                   <br />
-                  <small>{user.email} · {user.id}</small>
+                  <small>{user.id}</small>
                 </TableCell>
                 <TableCell>{user.role === 'admin' ? 'Admin' : 'Pharmacie'}</TableCell>
+                <TableCell>{user.pharmacies?.[0]?.name ?? '—'}</TableCell>
+                <TableCell>Stocké uniquement dans auth.users</TableCell>
+                <TableCell>{new Date(user.created_at).toLocaleDateString('fr-FR')}</TableCell>
                 <TableCell>
-                  <Badge className={badgeByStatus[user.status]}>{labelByStatus[user.status]}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge className={user.emailConfirmed ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-700 border-slate-200'}>
-                    {user.emailConfirmed ? 'Confirmé' : 'Non confirmé'}
+                  <Badge className={user.is_banned ? 'bg-red-50 text-red-700 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}>
+                    {user.is_banned ? 'Banni' : 'Actif'}
                   </Badge>
                 </TableCell>
-                <TableCell>{user.createdAt}</TableCell>
                 <TableCell>
                   <div className="actions">
-                    <Button variant="secondary">Modifier</Button>
-                    <Button variant="secondary">Relancer email</Button>
-                    <Button variant="secondary">Réinit. mot de passe</Button>
-                    <Button variant="danger">Bannir</Button>
-                    <Button variant="danger">Supprimer</Button>
+                    <Button variant="secondary" disabled>Modifier</Button>
+                    <Button variant="secondary" disabled>Relancer email</Button>
+                    <Button variant="secondary" disabled>Réinit. mot de passe</Button>
+                    <Button variant="danger" onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
+                    <Button variant="danger" onClick={() => void deleteUser(user)}>Supprimer</Button>
                   </div>
                 </TableCell>
               </TableRow>
