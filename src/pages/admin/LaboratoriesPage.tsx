@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ActionDropdown } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import {
   createLaboratory,
@@ -42,11 +42,13 @@ export const LaboratoriesPage = () => {
   const [selectedNode, setSelectedNode] = useState<{ type: NodeType; id?: string } | null>(null);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
-  const [catalogActionModal, setCatalogActionModal] = useState<null | 'create_bu' | 'create_root_brand' | 'create_root_product'>(null);
+  const [catalogActionModal, setCatalogActionModal] = useState<null | 'create_bu' | 'create_root_brand' | 'create_root_product' | 'move_products' | 'move_brands'>(null);
   const [catalogActionValue, setCatalogActionValue] = useState('');
   const [availableProducts, setAvailableProducts] = useState<Array<{ id: string; designation: string; nature: ProductNature }>>([]);
   const [selectedProductIdsToAdd, setSelectedProductIdsToAdd] = useState<string[]>([]);
   const [isLoadingAvailableProducts, setIsLoadingAvailableProducts] = useState(false);
+  const [moveTargetType, setMoveTargetType] = useState<'business_unit' | 'group_brand'>('business_unit');
+  const [moveTargetId, setMoveTargetId] = useState<string>('');
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogView, setCatalogView] = useState<{ type: 'root' | 'business_unit' | 'group_brand'; id?: string; label: string }>({ type: 'root', label: 'Racine du laboratoire' });
   const [openRoot, setOpenRoot] = useState(true);
@@ -203,6 +205,49 @@ export const LaboratoriesPage = () => {
     setCatalogActionValue('');
     setAvailableProducts([]);
     setSelectedProductIdsToAdd([]);
+    setSelectedProducts([]);
+    setSelectedBrands([]);
+    setMoveTargetType('business_unit');
+    setMoveTargetId('');
+  };
+
+  const submitMoveSelectedProducts = async () => {
+    if (!selectedLabId) return;
+    if (!selectedProducts.length) return setCatalogError('Sélectionnez au moins un produit à déplacer.');
+    if (!moveTargetId) return setCatalogError('Sélectionnez une destination.');
+    try {
+      await bulkMoveProducts({
+        laboratoryId: selectedLabId,
+        productIds: selectedProducts,
+        targetBusinessUnitId: moveTargetType === 'business_unit' ? moveTargetId : null,
+        targetGroupBrandId: moveTargetType === 'group_brand' ? moveTargetId : null,
+      });
+      setCatalogHasPendingChanges(true);
+      setFeedback('Produits déplacés avec succès.');
+      closeCatalogActionModal();
+      await loadCatalog(selectedLabId);
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : 'Déplacement des produits impossible.');
+    }
+  };
+
+  const submitMoveSelectedBrands = async () => {
+    if (!selectedLabId) return;
+    if (!selectedBrands.length) return setCatalogError('Sélectionnez au moins une marque à déplacer.');
+    if (!moveTargetId) return setCatalogError('Sélectionnez une BU de destination.');
+    try {
+      await bulkMoveGroupBrands({
+        laboratoryId: selectedLabId,
+        groupBrandIds: selectedBrands,
+        targetBusinessUnitId: moveTargetId,
+      });
+      setCatalogHasPendingChanges(true);
+      setFeedback('Marques déplacées avec succès.');
+      closeCatalogActionModal();
+      await loadCatalog(selectedLabId);
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : 'Déplacement des marques impossible.');
+    }
   };
 
   const openAddProductsModal = async (targetView?: { type: 'business_unit' | 'group_brand'; id: string; label: string }) => {
@@ -319,19 +364,23 @@ export const LaboratoriesPage = () => {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid #e5e7eb', paddingBottom: 8 }}>
             <Button variant={catalogView.type === 'root' ? 'secondary' : 'ghost'} onClick={() => setCatalogView({ type: 'root', label: 'Racine du laboratoire' })}>Catalogue</Button>
             {filtered.business_units.map((bu) => <Button key={bu.id} variant={catalogView.id === bu.id ? 'secondary' : 'ghost'} onClick={() => setCatalogView({ type: 'business_unit', id: bu.id, label: bu.name })}>{bu.name}</Button>)}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <Button variant="ghost" onClick={() => { setCatalogActionModal('move_products'); setMoveTargetType('business_unit'); setMoveTargetId(''); }}>Déplacer produits sélectionnés</Button>
+              <Button variant="ghost" onClick={() => { setCatalogActionModal('move_brands'); setMoveTargetId(''); }}>Déplacer marques sélectionnées</Button>
+            </div>
           </div>
 
           {catalogView.type === 'root' && <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>Racine — Brands & Produits</h3><button type="button" onClick={() => setOpenRoot((v) => !v)} style={{ width: 28, height: 28, borderRadius: 999, border: '1px solid #e2e8f0', background: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1, display: 'grid', placeItems: 'center' }}>{openRoot ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div>{openRoot && <>
             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><Button onClick={() => setCatalogActionModal('create_bu')}>Créer une unité (BU)</Button>{filtered.business_units.length === 0 && <><Button variant="secondary" onClick={() => { setCatalogView({ type: 'root', label: 'Racine du laboratoire' }); setCatalogActionModal('create_root_brand'); }}>Nouvelle marque (racine)</Button></>}</div>
-            {[...filtered.root_group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <div style={{ overflow: 'auto', marginTop: 8 }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div>}</details>)}
-            {filtered.root_products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits racine (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...filtered.root_products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
+            {[...filtered.root_group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <input type="checkbox" checked={selectedBrands.includes(brand.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelectedBrands((c) => e.target.checked ? [...c, brand.id] : c.filter((id) => id !== brand.id))} style={{ marginInline: 8 }} /> <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <div style={{ overflow: 'auto', marginTop: 8 }}><Table><TableHead><TableRow><TableHeaderCell style={{ width: 36 }}></TableHeaderCell><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell><input type="checkbox" checked={selectedProducts.includes(product.id)} onChange={(e) => setSelectedProducts((c) => e.target.checked ? [...c, product.id] : c.filter((id) => id !== product.id))} /></TableCell><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div>}</details>)}
+            {filtered.root_products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits racine (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell style={{ width: 36 }}></TableHeaderCell><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...filtered.root_products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell><input type="checkbox" checked={selectedProducts.includes(product.id)} onChange={(e) => setSelectedProducts((c) => e.target.checked ? [...c, product.id] : c.filter((id) => id !== product.id))} /></TableCell><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
             {filtered.root_products.length === 0 && <p style={{ marginTop: 10 }}>Pas de produit ajouté dans la racine.</p>}
           </>}</div>}
 
           {catalogView.type === 'business_unit' && activeBusinessUnit && <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>BU: {activeBusinessUnit.name}</h3><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Button variant="danger" onClick={() => void removeBU(activeBusinessUnit.id)}>Retirer cette unité</Button><button type="button" onClick={() => setOpenBu((v) => !v)} style={{ width: 28, height: 28, borderRadius: 999, border: '1px solid #e2e8f0', background: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1, display: 'grid', placeItems: 'center' }}>{openBu ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div></div>{openBu && <>
             <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); setCatalogActionModal('create_root_brand'); }}>Ajouter une marque</Button><Button variant="secondary" onClick={() => void openAddProductsModal({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name })}>Ajouter des produits</Button></div>
-            {[...activeBusinessUnit.group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <Card style={{ marginTop: 8, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de la marque (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}</details>)}
-            {activeBusinessUnit.products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de l'unité (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...activeBusinessUnit.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
+            {[...activeBusinessUnit.group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <input type="checkbox" checked={selectedBrands.includes(brand.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelectedBrands((c) => e.target.checked ? [...c, brand.id] : c.filter((id) => id !== brand.id))} style={{ marginInline: 8 }} /> <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <Card style={{ marginTop: 8, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de la marque (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell style={{ width: 36 }}></TableHeaderCell><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell><input type="checkbox" checked={selectedProducts.includes(product.id)} onChange={(e) => setSelectedProducts((c) => e.target.checked ? [...c, product.id] : c.filter((id) => id !== product.id))} /></TableCell><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}</details>)}
+            {activeBusinessUnit.products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de l'unité (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell style={{ width: 36 }}></TableHeaderCell><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...activeBusinessUnit.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell><input type="checkbox" checked={selectedProducts.includes(product.id)} onChange={(e) => setSelectedProducts((c) => e.target.checked ? [...c, product.id] : c.filter((id) => id !== product.id))} /></TableCell><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
             {activeBusinessUnit.products.length === 0 && <p style={{ marginTop: 10 }}>Pas de produit ajouté dans cette BU.</p>}
           </>}</div>}
         </Card>
@@ -343,9 +392,11 @@ export const LaboratoriesPage = () => {
     </Card></div>}
 
     {catalogActionModal && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}><Card style={{ width: 'min(640px, 94vw)' }}>
-      <div className="toolbar"><h2>{catalogActionModal === 'create_bu' ? 'Créer une BU' : catalogActionModal === 'create_root_brand' ? 'Créer un brand racine' : 'Ajouter un produit racine'}</h2><Button variant="ghost" onClick={closeCatalogActionModal}>Fermer</Button></div>
-      {catalogActionModal !== 'create_root_product' && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value)} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
+      <div className="toolbar"><h2>{catalogActionModal === 'create_bu' ? 'Créer une BU' : catalogActionModal === 'create_root_brand' ? 'Créer un brand racine' : catalogActionModal === 'move_products' ? 'Déplacer des produits' : catalogActionModal === 'move_brands' ? 'Déplacer des marques' : 'Ajouter un produit racine'}</h2><Button variant="ghost" onClick={closeCatalogActionModal}>Fermer</Button></div>
+      {(catalogActionModal === 'create_bu' || catalogActionModal === 'create_root_brand') && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value)} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
       {catalogActionModal === 'create_root_product' && <div className="grid">{isLoadingAvailableProducts && <p>Chargement des produits disponibles…</p>}{!isLoadingAvailableProducts && availableProducts.length === 0 && <p>Aucun produit disponible à ajouter.</p>}{!isLoadingAvailableProducts && availableProducts.length > 0 && <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}>{availableProducts.map((product) => <label key={product.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}><input type="checkbox" checked={selectedProductIdsToAdd.includes(product.id)} onChange={(e) => setSelectedProductIdsToAdd((current) => e.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /><span>{product.designation} ({product.nature})</span></label>)}</div>}<div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitAddProductsToCatalog()}>Ajouter la sélection</Button></div></div>}
+      {catalogActionModal === 'move_products' && <div className="grid"><p>{selectedProducts.length} produit(s) sélectionné(s).</p><Select value={moveTargetType} onChange={(e) => { setMoveTargetType(e.target.value as 'business_unit' | 'group_brand'); setMoveTargetId(''); }}><option value="business_unit">Vers une BU</option><option value="group_brand">Vers une marque</option></Select><Select value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)}><option value="" disabled>Sélectionner la destination</option>{moveTargetType === 'business_unit' ? filtered?.business_units.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>) : (filtered?.business_units ?? []).flatMap((bu) => bu.group_brands.map((brand) => <option key={brand.id} value={brand.id}>{bu.name} / {brand.name}</option>))}</Select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitMoveSelectedProducts()}>Déplacer</Button></div></div>}
+      {catalogActionModal === 'move_brands' && <div className="grid"><p>{selectedBrands.length} marque(s) sélectionnée(s).</p><Select value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)}><option value="" disabled>Sélectionner la BU destination</option>{filtered?.business_units.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>)}</Select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitMoveSelectedBrands()}>Déplacer</Button></div></div>}
     </Card></div>}
 
   </div>);
