@@ -113,6 +113,7 @@ export const ProductsPage = () => {
     const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
     if (!raw.length) {
       setImportErrors(['Le fichier est vide.']);
+      setIsImportModalOpen(true);
       return;
     }
 
@@ -143,23 +144,48 @@ export const ProductsPage = () => {
       }
     });
 
-    const duplicateKeys = new Set<string>();
-    const seen = new Set<string>();
+    const seenPct = new Map<string, number>();
+    const seenBarcode = new Map<string, number>();
     parsedRows.forEach((row, idx) => {
-      const key = `${row.designation.toLowerCase()}|${row.pct_code.toLowerCase()}|${row.barcode.toLowerCase()}`;
-      if (seen.has(key)) duplicateKeys.add(String(idx + 2));
-      seen.add(key);
+      const line = idx + 2;
+      if (row.pct_code) {
+        const pct = row.pct_code.toLowerCase();
+        if (seenPct.has(pct)) {
+          errors.push(`Ligne ${line}: pct_code en doublon dans le fichier (déjà vu ligne ${seenPct.get(pct)}).`);
+        } else {
+          seenPct.set(pct, line);
+        }
+      }
+      if (row.barcode) {
+        const barcode = row.barcode.toLowerCase();
+        if (seenBarcode.has(barcode)) {
+          errors.push(`Ligne ${line}: barcode en doublon dans le fichier (déjà vu ligne ${seenBarcode.get(barcode)}).`);
+        } else {
+          seenBarcode.set(barcode, line);
+        }
+      }
     });
-    if (duplicateKeys.size) errors.push(`Doublons détectés dans le fichier aux lignes: ${Array.from(duplicateKeys).join(', ')}`);
+
+    const existingPct = new Set(products.map((p) => (p.pct_code || '').toLowerCase()).filter(Boolean));
+    const existingBarcode = new Set(products.map((p) => p.barcode.toLowerCase()).filter(Boolean));
+    parsedRows.forEach((row, idx) => {
+      const line = idx + 2;
+      if (row.pct_code && existingPct.has(row.pct_code.toLowerCase())) {
+        errors.push(`Ligne ${line}: pct_code déjà existant dans le catalogue.`);
+      }
+      if (row.barcode && existingBarcode.has(row.barcode.toLowerCase())) {
+        errors.push(`Ligne ${line}: barcode déjà existant dans le catalogue.`);
+      }
+    });
 
     setImportErrors(errors);
-    setImportRows(errors.length ? [] : parsedRows);
-    if (!errors.length) setIsImportModalOpen(true);
+    setImportRows(parsedRows);
+    setIsImportModalOpen(true);
     event.target.value = '';
   };
 
   const handleConfirmImport = async () => {
-    if (!importRows.length) return;
+    if (!importRows.length || importErrors.length > 0) return;
     setIsImporting(true);
     try {
       const created: ManagedProduct[] = [];
@@ -243,7 +269,7 @@ export const ProductsPage = () => {
         <div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Précédent</Button><Button variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Suivant</Button></div>
       </div>
     </Card>
-    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><p>{importRows.length} ligne(s) prête(s) à être importée(s).</p><div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row, idx) => <TableRow key={`${row.designation}-${idx}`}><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div><div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
+    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><p>{importRows.length} ligne(s) chargée(s) pour import.</p>{importErrors.length > 0 && <div style={{ color: '#b42318', marginTop: 8 }}><p>Corrigez les erreurs suivantes avant de valider :</p>{importErrors.map((err) => <p key={err}>{err}</p>)}</div>}<div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row, idx) => <TableRow key={`${row.designation}-${idx}`}><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div><div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importErrors.length > 0 || importRows.length === 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
     {isModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}><Card><div className="toolbar"><h2>{editingId ? 'Modifier le produit' : 'Ajouter un produit'}</h2><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button></div><form className="grid" onSubmit={handleSubmit}><Input placeholder="Désignation" value={form.designation} onChange={(e) => setForm((c) => ({ ...c, designation: e.target.value }))} required /><Select value={form.nature} onChange={(e) => setForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></Select><Input placeholder="Code PCT (obligatoire pour médicament)" value={form.pct_code} onChange={(e) => setForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre (vide = PCT ou génération auto)" value={form.barcode} onChange={(e) => setForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={form.purchase_unit_price_ht} onChange={(e) => setForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} required /><Select value={form.vat_rate_id} onChange={(e) => setForm((c) => ({ ...c, vat_rate_id: e.target.value }))} required><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</Select><Select value={form.laboratory_id} onChange={(e) => setForm((c) => ({ ...c, laboratory_id: e.target.value }))} required><option value="" disabled>Sélectionner un laboratoire</option>{laboratories.map((l) => <option key={l.id} value={l.id}>{l.designation}</option>)}</Select>{fieldError && <p style={{ color: '#b42318' }}>{fieldError}</p>}<Button type="submit" disabled={isSaving}>{actionLabel}</Button></form></Card></div>}
   </div>;
 };
