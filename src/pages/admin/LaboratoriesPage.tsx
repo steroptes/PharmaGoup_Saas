@@ -222,7 +222,6 @@ export const LaboratoriesPage = () => {
         .eq('laboratory_id', selectedLabId)
         .is('business_unit_id', null)
         .is('group_brand_id', null)
-        .eq('is_active', true)
         .order('designation', { ascending: true });
       if (error) throw error;
       setAvailableProducts((data ?? []) as Array<{ id: string; designation: string; nature: ProductNature }>);
