@@ -52,6 +52,7 @@ export const LaboratoriesPage = () => {
   const [openRoot, setOpenRoot] = useState(true);
   const [openBu, setOpenBu] = useState(true);
   const [openBrands, setOpenBrands] = useState<Record<string, boolean>>({});
+  const [modeToast, setModeToast] = useState<string | null>(null);
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer la fiche'), [editingId]);
 
@@ -286,6 +287,16 @@ export const LaboratoriesPage = () => {
     return null;
   }, [catalogView, filtered]);
 
+  useEffect(() => {
+    if (!isCatalogModalOpen || !filtered) return;
+    const message = filtered.business_units.length === 0
+      ? 'Mode sans BU: le catalogue est géré à la racine.'
+      : 'Mode avec BU: sélectionnez une BU/brand pour organiser les produits.';
+    setModeToast(message);
+    const timer = setTimeout(() => setModeToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [isCatalogModalOpen, filtered?.business_units.length, catalogView.type, catalogView.id]);
+
   return (<div className="grid"><Card><h1>Laboratoires</h1><p>Créer et gérer les fiches laboratoires, puis piloter le catalogue hiérarchique.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
     <Card style={{ minHeight: "56vh", display: "flex", flexDirection: "column" }}><div className="toolbar"><h2>Fiches laboratoires</h2><Button onClick={openCreateModal}>+ Ajouter un laboratoire</Button></div>
       <Input placeholder="Rechercher par désignation, matricule fiscal ou téléphone" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setPage(1); }} style={{ marginTop: 12 }} />
@@ -303,7 +314,7 @@ export const LaboratoriesPage = () => {
       {catalogLoading && <p>Chargement du catalogue…</p>}
       {catalogError && <div style={{ marginTop: 8, padding: 10, borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2', color: '#991b1b' }}><strong>Erreur de gestion du catalogue:</strong> {catalogError}</div>}
       {filtered && <>
-        <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: filtered.business_units.length === 0 ? '#fff7ed' : '#ecfeff', border: '1px solid #e5e7eb' }}><strong>ℹ️ {filtered.business_units.length === 0 ? 'Mode sans BU' : 'Mode avec BU'}</strong><p style={{ marginTop: 4 }}>{filtered.business_units.length === 0 ? 'Le catalogue est géré à la racine (produits et brands).' : 'Sélectionnez une BU dans la barre de menu puis déroulez les accordéons pour gérer les produits.'}</p></div>
+        {modeToast && <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: filtered.business_units.length === 0 ? '#fff7ed' : '#ecfeff', border: '1px solid #e5e7eb' }}><strong>ℹ️ {modeToast}</strong></div>}
         <Card style={{ marginTop: 10, padding: 12, border: '1px solid #e2e8f0', borderRadius: 10 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid #e5e7eb', paddingBottom: 8 }}>
             <Button variant={catalogView.type === 'root' ? 'secondary' : 'ghost'} onClick={() => setCatalogView({ type: 'root', label: 'Racine du laboratoire' })}>Catalogue</Button>
@@ -314,12 +325,14 @@ export const LaboratoriesPage = () => {
             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><Button onClick={() => setCatalogActionModal('create_bu')}>Créer une unité (BU)</Button>{filtered.business_units.length === 0 && <><Button variant="secondary" onClick={() => { setCatalogView({ type: 'root', label: 'Racine du laboratoire' }); setCatalogActionModal('create_root_brand'); }}>Nouvelle marque (racine)</Button></>}</div>
             {[...filtered.root_group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <div style={{ overflow: 'auto', marginTop: 8 }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div>}</details>)}
             {filtered.root_products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits racine (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...filtered.root_products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
+            {filtered.root_products.length === 0 && <p style={{ marginTop: 10 }}>Pas de produit ajouté dans la racine.</p>}
           </>}</div>}
 
           {catalogView.type === 'business_unit' && activeBusinessUnit && <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>BU: {activeBusinessUnit.name}</h3><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Button variant="danger" onClick={() => void removeBU(activeBusinessUnit.id)}>Retirer cette unité</Button><button type="button" onClick={() => setOpenBu((v) => !v)} style={{ width: 28, height: 28, borderRadius: 999, border: '1px solid #e2e8f0', background: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1, display: 'grid', placeItems: 'center' }}>{openBu ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div></div>{openBu && <>
             <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); setCatalogActionModal('create_root_brand'); }}>Ajouter une marque</Button><Button variant="secondary" onClick={() => void openAddProductsModal({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name })}>Ajouter des produits</Button></div>
             {[...activeBusinessUnit.group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => void openAddProductsModal({ type: 'group_brand', id: brand.id, label: brand.name })}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <Card style={{ marginTop: 8, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de la marque (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}</details>)}
             {activeBusinessUnit.products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de l'unité (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...activeBusinessUnit.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
+            {activeBusinessUnit.products.length === 0 && <p style={{ marginTop: 10 }}>Pas de produit ajouté dans cette BU.</p>}
           </>}</div>}
         </Card>
       </>}

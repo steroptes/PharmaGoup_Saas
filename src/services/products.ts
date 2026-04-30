@@ -76,7 +76,7 @@ const normalizePayload = (payload: ManagedProductInput) => {
     : (pctCode || generateBarcode());
 
   return {
-    designation: payload.designation.trim(),
+    designation: payload.designation.trim().toUpperCase(),
     nature: payload.nature,
     pct_code: pctCode,
     barcode,
