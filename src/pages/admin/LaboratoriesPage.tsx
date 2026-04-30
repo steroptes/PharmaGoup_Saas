@@ -15,7 +15,7 @@ import {
 import { getLaboratoryCatalogTree, LaboratoryCatalogTree } from '@/services/catalogue';
 import { bulkDeleteGroupBrands, bulkDeleteProducts, bulkMoveGroupBrands, bulkMoveProducts, deleteBusinessUnit } from '@/services/catalogBulk';
 import { commitFirstBuMigration, createBusinessUnitOrRequireMigration, initFirstBuMigration, previewFirstBuMigration } from '@/services/catalogFirstBuMigration';
-import { listVatRates, ProductNature, VatRate } from '@/services/products';
+import { ProductNature } from '@/services/products';
 import { supabase } from '@/lib/supabase';
 
 const PAGE_SIZE = 8;
@@ -44,8 +44,9 @@ export const LaboratoriesPage = () => {
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [catalogActionModal, setCatalogActionModal] = useState<null | 'create_bu' | 'create_root_brand' | 'create_root_product'>(null);
   const [catalogActionValue, setCatalogActionValue] = useState('');
-  const [productForm, setProductForm] = useState({ designation: '', nature: 'medicament' as ProductNature, pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: '' });
-  const [vatRates, setVatRates] = useState<VatRate[]>([]);
+  const [availableProducts, setAvailableProducts] = useState<Array<{ id: string; designation: string; nature: ProductNature }>>([]);
+  const [selectedProductIdsToAdd, setSelectedProductIdsToAdd] = useState<string[]>([]);
+  const [isLoadingAvailableProducts, setIsLoadingAvailableProducts] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogView, setCatalogView] = useState<{ type: 'root' | 'business_unit' | 'group_brand'; id?: string; label: string }>({ type: 'root', label: 'Racine du laboratoire' });
   const [openRoot, setOpenRoot] = useState(true);
@@ -81,7 +82,6 @@ export const LaboratoriesPage = () => {
       }
     };
     void load();
-    void listVatRates().then((data) => setVatRates(data)).catch(() => undefined);
   }, []);
 
   useEffect(() => { if (selectedLabId && isCatalogModalOpen) void loadCatalog(selectedLabId); }, [selectedLabId, isCatalogModalOpen]);
@@ -179,26 +179,6 @@ export const LaboratoriesPage = () => {
     await loadCatalog(selectedLabId);
   };
 
-  const submitCreateRootProduct = async () => {
-    if (!selectedLabId) return;
-    if (filtered?.business_units.length && catalogView.type === 'root') return setCatalogError('Mode avec BU: la création à la racine est interdite. Sélectionnez une BU ou un brand.');
-    if (!productForm.designation.trim() || !productForm.vat_rate_id || !productForm.purchase_unit_price_ht) return setFeedback('Complétez les champs obligatoires du produit.');
-    try {
-      const payload: Record<string, unknown> = { designation: productForm.designation.trim(), nature: productForm.nature, pct_code: productForm.pct_code || null, barcode: productForm.barcode || null, purchase_unit_price_ht: Number(productForm.purchase_unit_price_ht), vat_rate_id: productForm.vat_rate_id, laboratory_id: selectedLabId, is_active: true, business_unit_id: null, group_brand_id: null };
-      if (catalogView.type === 'business_unit' && catalogView.id) payload.business_unit_id = catalogView.id;
-      if (catalogView.type === 'group_brand' && catalogView.id) payload.group_brand_id = catalogView.id;
-      const { error } = await supabase.from('managed_products').insert(payload);
-      if (error) throw error;
-      setCatalogHasPendingChanges(true);
-      setCatalogActionModal(null);
-      setProductForm({ designation: '', nature: 'medicament', pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: vatRates[0]?.id || '' });
-      setFeedback('Produit racine créé.');
-      await loadCatalog(selectedLabId);
-    } catch (error) { setFeedback(error instanceof Error ? error.message : 'Création produit impossible.'); }
-  };
-
-
-
   const removeProduct = async (productId: string) => {
     if (!selectedLabId) return;
     try {
@@ -220,6 +200,55 @@ export const LaboratoriesPage = () => {
   const closeCatalogActionModal = () => {
     setCatalogActionModal(null);
     setCatalogActionValue('');
+    setAvailableProducts([]);
+    setSelectedProductIdsToAdd([]);
+  };
+
+  const openAddProductsModal = async () => {
+    if (!selectedLabId) return;
+    if (catalogView.type === 'root') {
+      setCatalogError('Sélectionnez une BU ou un brand pour ajouter des produits.');
+      return;
+    }
+    setCatalogActionModal('create_root_product');
+    setIsLoadingAvailableProducts(true);
+    setCatalogError(null);
+    try {
+      const { data, error } = await supabase
+        .from('managed_products')
+        .select('id, designation, nature')
+        .eq('laboratory_id', selectedLabId)
+        .is('business_unit_id', null)
+        .is('group_brand_id', null)
+        .eq('is_active', true)
+        .order('designation', { ascending: true });
+      if (error) throw error;
+      setAvailableProducts((data ?? []) as Array<{ id: string; designation: string; nature: ProductNature }>);
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : 'Impossible de charger les produits disponibles.');
+    } finally {
+      setIsLoadingAvailableProducts(false);
+    }
+  };
+
+  const submitAddProductsToCatalog = async () => {
+    if (!selectedLabId) return;
+    if (!selectedProductIdsToAdd.length) return setCatalogError('Sélectionnez au moins un produit.');
+    if (catalogView.type === 'root') return setCatalogError('Destination invalide.');
+    try {
+      await bulkMoveProducts({
+        laboratoryId: selectedLabId,
+        productIds: selectedProductIdsToAdd,
+        targetBusinessUnitId: catalogView.type === 'business_unit' ? catalogView.id ?? null : null,
+        targetGroupBrandId: catalogView.type === 'group_brand' ? catalogView.id ?? null : null,
+      });
+      setCatalogHasPendingChanges(true);
+      closeCatalogActionModal();
+      await loadCatalog(selectedLabId);
+      setFeedback('Produits ajoutés au catalogue.');
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : 'Ajout des produits impossible.');
+    }
   };
 
   const removeBU = async (buId: string) => {
@@ -281,14 +310,14 @@ export const LaboratoriesPage = () => {
           </div>
 
           {catalogView.type === 'root' && <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>Racine — Brands & Produits</h3><button type="button" onClick={() => setOpenRoot((v) => !v)} style={{ width: 28, height: 28, borderRadius: 999, border: '1px solid #e2e8f0', background: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1, display: 'grid', placeItems: 'center' }}>{openRoot ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div>{openRoot && <>
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><Button onClick={() => setCatalogActionModal('create_bu')}>Créer une unité (BU)</Button>{filtered.business_units.length === 0 && <><Button variant="secondary" onClick={() => { setCatalogView({ type: 'root', label: 'Racine du laboratoire' }); setCatalogActionModal('create_root_brand'); }}>Nouvelle marque (racine)</Button><Button variant="secondary" onClick={() => { setCatalogView({ type: 'root', label: 'Racine du laboratoire' }); setCatalogActionModal('create_root_product'); }}>Nouveau produit (racine)</Button></>}</div>
-            {[...filtered.root_group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => { setCatalogView({ type: 'group_brand', id: brand.id, label: brand.name }); setCatalogActionModal('create_root_product'); }}>Nouveau produit dans cette marque</Button></div>{brand.products.length > 0 && <div style={{ overflow: 'auto', marginTop: 8 }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div>}</details>)}
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><Button onClick={() => setCatalogActionModal('create_bu')}>Créer une unité (BU)</Button>{filtered.business_units.length === 0 && <><Button variant="secondary" onClick={() => { setCatalogView({ type: 'root', label: 'Racine du laboratoire' }); setCatalogActionModal('create_root_brand'); }}>Nouvelle marque (racine)</Button></>}</div>
+            {[...filtered.root_group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => { setCatalogView({ type: 'group_brand', id: brand.id, label: brand.name }); void openAddProductsModal(); }}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <div style={{ overflow: 'auto', marginTop: 8 }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div>}</details>)}
             {filtered.root_products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits racine (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...filtered.root_products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
           </>}</div>}
 
           {catalogView.type === 'business_unit' && activeBusinessUnit && <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8, background: '#fff' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>BU: {activeBusinessUnit.name}</h3><div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Button variant="danger" onClick={() => void removeBU(activeBusinessUnit.id)}>Retirer cette unité</Button><button type="button" onClick={() => setOpenBu((v) => !v)} style={{ width: 28, height: 28, borderRadius: 999, border: '1px solid #e2e8f0', background: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1, display: 'grid', placeItems: 'center' }}>{openBu ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></div></div>{openBu && <>
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); setCatalogActionModal('create_root_brand'); }}>Ajouter une marque</Button><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); setCatalogActionModal('create_root_product'); }}>Ajouter un produit</Button></div>
-            {[...activeBusinessUnit.group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => { setCatalogView({ type: 'group_brand', id: brand.id, label: brand.name }); setCatalogActionModal('create_root_product'); }}>Nouveau produit dans cette marque</Button></div>{brand.products.length > 0 && <Card style={{ marginTop: 8, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de la marque (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}</details>)}
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); setCatalogActionModal('create_root_brand'); }}>Ajouter une marque</Button><Button variant="secondary" onClick={() => { setCatalogView({ type: 'business_unit', id: activeBusinessUnit.id, label: activeBusinessUnit.name }); void openAddProductsModal(); }}>Ajouter des produits</Button></div>
+            {[...activeBusinessUnit.group_brands].sort((a, b) => a.name.localeCompare(b.name)).map((brand) => <details key={brand.id} style={{ marginTop: 8, border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}><summary style={{ cursor: 'pointer', listStyle: 'none' }}>Brand: {brand.name} <Button variant="danger" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void removeBrand(brand.id); }}>Retirer</Button></summary><div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => { setCatalogView({ type: 'group_brand', id: brand.id, label: brand.name }); void openAddProductsModal(); }}>Ajouter des produits dans cette marque</Button></div>{brand.products.length > 0 && <Card style={{ marginTop: 8, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de la marque (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...brand.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}</details>)}
             {activeBusinessUnit.products.length > 0 && <Card style={{ marginTop: 10, padding: 8 }}><h4 style={{ margin: '0 0 8px 0' }}>Produits de l'unité (A→Z)</h4><div style={{ overflow: 'auto' }}><Table><TableHead><TableRow><TableHeaderCell>Produit</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{[...activeBusinessUnit.products].sort((a, b) => a.designation.localeCompare(b.designation)).map((product) => <TableRow key={product.id}><TableCell>{product.designation}</TableCell><TableCell>{product.nature}</TableCell><TableCell><Button variant="danger" onClick={() => void removeProduct(product.id)}>Retirer</Button></TableCell></TableRow>)}</TableBody></Table></div></Card>}
           </>}</div>}
         </Card>
@@ -302,7 +331,7 @@ export const LaboratoriesPage = () => {
     {catalogActionModal && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}><Card style={{ width: 'min(640px, 94vw)' }}>
       <div className="toolbar"><h2>{catalogActionModal === 'create_bu' ? 'Créer une BU' : catalogActionModal === 'create_root_brand' ? 'Créer un brand racine' : 'Ajouter un produit racine'}</h2><Button variant="ghost" onClick={closeCatalogActionModal}>Fermer</Button></div>
       {catalogActionModal !== 'create_root_product' && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value)} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
-      {catalogActionModal === 'create_root_product' && <div className="grid"><Input placeholder="Désignation" value={productForm.designation} onChange={(e) => setProductForm((c) => ({ ...c, designation: e.target.value }))} /><Input placeholder="Code PCT (obligatoire pour médicament)" value={productForm.pct_code} onChange={(e) => setProductForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre" value={productForm.barcode} onChange={(e) => setProductForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={productForm.purchase_unit_price_ht} onChange={(e) => setProductForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} /><select value={productForm.nature} onChange={(e) => setProductForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></select><select value={productForm.vat_rate_id} onChange={(e) => setProductForm((c) => ({ ...c, vat_rate_id: e.target.value }))}><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitCreateRootProduct()}>Enregistrer</Button></div></div>}
+      {catalogActionModal === 'create_root_product' && <div className="grid">{isLoadingAvailableProducts && <p>Chargement des produits disponibles…</p>}{!isLoadingAvailableProducts && availableProducts.length === 0 && <p>Aucun produit disponible à ajouter.</p>}{!isLoadingAvailableProducts && availableProducts.length > 0 && <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}>{availableProducts.map((product) => <label key={product.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}><input type="checkbox" checked={selectedProductIdsToAdd.includes(product.id)} onChange={(e) => setSelectedProductIdsToAdd((current) => e.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /><span>{product.designation} ({product.nature})</span></label>)}</div>}<div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitAddProductsToCatalog()}>Ajouter la sélection</Button></div></div>}
     </Card></div>}
 
   </div>);
