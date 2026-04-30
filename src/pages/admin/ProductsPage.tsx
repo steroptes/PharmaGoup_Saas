@@ -23,7 +23,7 @@ const getFriendlyProductError = (error: unknown) => {
   const message = [candidate?.message, candidate?.details, candidate?.hint].filter(Boolean).join(' — ') || 'Action impossible.';
   if (message.includes('managed_products_pct_code_ci_unique') || message.includes('managed_products_pct_unique_not_null')) return 'Le code PCT existe déjà. Veuillez saisir un code PCT unique.';
   if (message.includes('managed_products_barcode_ci_unique') || message.includes('managed_products_barcode_key')) return 'Le code à barre existe déjà. Veuillez saisir un code à barre unique.';
-  if (message.includes('root product is forbidden when laboratory has business units')) return "Ce laboratoire a des BU : l'ajout à la racine est bloqué par la règle SQL.";
+  if (message.includes('root product is forbidden when laboratory has business units')) return "Configuration SQL non alignée: appliquez les dernières migrations pour autoriser la création indépendante du catalogue.";
   return message;
 };
 
