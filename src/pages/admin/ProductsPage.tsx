@@ -8,8 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } fro
 import { listLaboratories, Laboratory } from '@/services/laboratories';
 import {
   createManagedProduct,
-  deleteManagedProduct,
-  deleteManagedProducts,
+  deleteManagedProduct ,
   listManagedProducts,
   listVatRates,
   ManagedProduct,
@@ -91,6 +90,15 @@ export const ProductsPage = () => {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const showErrorToast = (title: string, lines: string[]) => {
+    if (!lines.length) return;
+    const toast = { id: `${title}-${Date.now()}-${Math.random()}`, title, lines };
+    setToasts((current) => [...current, toast]);
+    setTimeout(() => {
+      setToasts((current) => current.filter((item) => item.id !== toast.id));
+    }, 7000);
+  };
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer le produit'), [editingId]);
@@ -372,14 +380,31 @@ export const ProductsPage = () => {
   const deleteSelectedProducts = async () => {
     if (!selectedProductIds.length) return;
     if (!window.confirm(`Supprimer ${selectedProductIds.length} produit(s) sélectionné(s) ?`)) return;
-    try {
-      await deleteManagedProducts(selectedProductIds);
-      setProducts((current) => current.filter((item) => !selectedProductIds.includes(item.id)));
-      setSelectedProductIds([]);
-      setFeedback('Produits supprimés.');
-    } catch (error) {
-      setFeedback(getFriendlyProductError(error));
+
+    const selectedProducts = products.filter((item) => selectedProductIds.includes(item.id));
+    const deletedIds: string[] = [];
+    const deletionErrors: string[] = [];
+
+    await Promise.all(selectedProducts.map(async (product) => {
+      try {
+        await deleteManagedProduct(product.id);
+        deletedIds.push(product.id);
+      } catch (error) {
+        deletionErrors.push(`${product.designation}: ${getFriendlyProductError(error)}`);
+      }
+    }));
+
+    if (deletedIds.length) {
+      setProducts((current) => current.filter((item) => !deletedIds.includes(item.id)));
+      setFeedback(`${deletedIds.length} produit(s) supprimé(s).`);
     }
+
+    if (deletionErrors.length) {
+      showErrorToast('Erreurs de suppression', deletionErrors);
+      if (!deletedIds.length) setFeedback('Aucun produit supprimé.');
+    }
+
+    setSelectedProductIds((current) => current.filter((id) => !deletedIds.includes(id)));
   };
   const toggleArchive = async (product: ManagedProduct) => {
     try {
@@ -392,7 +417,7 @@ export const ProductsPage = () => {
   return <div className="grid" data-selected-count={selectedProductIds.length}>{/* shortened intentionally */}
     <Card><h1>Produits</h1><p>Tableau des produits avec actions d’archivage et d’édition.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
     <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
-      <div className="toolbar"><h2>Catalogue</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
+      <div className="toolbar"><h2>Index</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button variant="secondary" disabled={!selectedProductIds.length} onClick={() => void deleteSelectedProducts()}>Supprimer la sélection ({selectedProductIds.length})</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={(e) => void parseImportFile(e)} style={{ display: 'none' }} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
         <Input placeholder="Rechercher par désignation, code PCT ou code à barre" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} />
