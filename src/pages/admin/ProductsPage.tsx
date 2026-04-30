@@ -46,6 +46,7 @@ type ImportAnomalyRow = {
   errors: string[];
 };
 type EditableAnomalyField = 'designation' | 'nature' | 'pct_code' | 'barcode' | 'purchase_unit_price_ht' | 'vat_rate_label' | 'laboratory_designation';
+type ToastMessage = { id: string; title: string; lines: string[] };
 
 const getFriendlyProductError = (error: unknown) => {
   const candidate = error as { message?: string; details?: string; hint?: string };
@@ -79,6 +80,7 @@ export const ProductsPage = () => {
   const [editingCell, setEditingCell] = useState<{ row: number; field: EditableAnomalyField } | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer le produit'), [editingId]);
@@ -99,6 +101,21 @@ export const ProductsPage = () => {
     };
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!importErrors.length) return;
+    const grouped = new Map<string, string[]>();
+    importErrors.forEach((error) => {
+      const match = error.match(/^Ligne\s+(\d+):\s*(.*)$/i);
+      if (!match) return;
+      const key = `Ligne ${match[1]}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), match[2]]);
+    });
+    const nextToasts = Array.from(grouped.entries()).map(([title, lines]) => ({ id: `${title}-${Date.now()}`, title, lines }));
+    setToasts(nextToasts);
+    const timer = setTimeout(() => setToasts([]), 6000);
+    return () => clearTimeout(timer);
+  }, [importErrors]);
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -253,7 +270,11 @@ export const ProductsPage = () => {
     if (errs.length) return { ...row, errors: errs };
     const valid: ImportRow = { row_number: row.row_number, designation: row.designation.trim(), nature: nature as ProductNature, pct_code: pctCode, barcode, purchase_unit_price_ht: price, vat_rate_id: vatRate!.id, vat_rate_label: vatRate!.label, laboratory_id: laboratory!.id, laboratory_designation: laboratory!.designation };
     setImportRows((current) => [...current, valid].sort((a, b) => a.row_number - b.row_number));
-    setAnomalyRows((current) => current.filter((a) => a.row_number !== row.row_number));
+    setAnomalyRows((current) => {
+      const next = current.filter((a) => a.row_number !== row.row_number);
+      if (!next.length) setImportErrors([]);
+      return next;
+    });
     return null;
   };
   const setAnomalyField = (rowNumber: number, field: EditableAnomalyField, value: string) => {
@@ -261,7 +282,7 @@ export const ProductsPage = () => {
   };
 
   const handleConfirmImport = async () => {
-    if (!importRows.length || anomalyRows.length > 0 || importErrors.length > 0) return;
+    if (!importRows.length || anomalyRows.length > 0) return;
     setIsImporting(true);
     try {
       const created: ManagedProduct[] = [];
@@ -349,7 +370,6 @@ export const ProductsPage = () => {
     <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
       <div className="toolbar"><h2>Catalogue</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
       <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={(e) => void parseImportFile(e)} style={{ display: 'none' }} />
-      {importErrors.length > 0 && <div style={{ marginTop: 8, color: '#b42318' }}>{importErrors.map((err) => <p key={err}>{err}</p>)}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 12, marginTop: 12 }}>
         <Input placeholder="Rechercher par désignation, code PCT ou code à barre" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }} />
         <Select value={laboratoryFilter} onChange={(e) => { setLaboratoryFilter(e.target.value); setPage(1); }}><option value="all">Tous les laboratoires</option>{laboratories.map((l) => <option key={l.id} value={l.id}>{l.designation}</option>)}</Select>
@@ -374,7 +394,8 @@ export const ProductsPage = () => {
         <div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Précédent</Button><Button variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Suivant</Button></div>
       </div>
     </Card>
-    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1200px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Button variant="secondary" style={{ background: activeImportTab === 'entries' ? '#0f172a' : undefined, color: activeImportTab === 'entries' ? '#fff' : undefined }} onClick={() => setActiveImportTab('entries')}>Liste des entrées ({importRows.length})</Button><Button variant="secondary" style={{ background: activeImportTab === 'anomalies' ? '#0f172a' : undefined, color: activeImportTab === 'anomalies' ? '#fff' : undefined }} onClick={() => setActiveImportTab('anomalies')}>Anomalies ({anomalyRows.length})</Button></div>{activeImportTab === 'entries' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row) => <TableRow key={`valid-${row.row_number}`}><TableCell>{row.row_number}</TableCell><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div>}{activeImportTab === 'anomalies' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Erreurs</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{anomalyRows.map((row) => <TableRow key={`anomaly-${row.row_number}`}><TableCell>{row.row_number}</TableCell>{(['designation', 'nature', 'pct_code', 'barcode', 'purchase_unit_price_ht', 'vat_rate_label', 'laboratory_designation'] as EditableAnomalyField[]).map((field) => <TableCell key={`${row.row_number}-${field}`}>{editingCell?.row === row.row_number && editingCell.field === field ? <Input autoFocus value={String(row[field])} onBlur={() => setEditingCell(null)} onChange={(e) => setAnomalyField(row.row_number, field, e.target.value)} /> : <button type="button" onClick={() => setEditingCell({ row: row.row_number, field })} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', width: '100%' }}>{String(row[field]) || '-'}</button>}</TableCell>)}<TableCell>{row.errors.join(', ')}</TableCell><TableCell><Button variant="secondary" onClick={() => { const updated = revalidateAnomalyRow(row); if (updated) setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? updated : r)); }}>Vérifier</Button></TableCell></TableRow>)}</TableBody></Table></div>}<div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importRows.length === 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
+    {isImportModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 45 }}><Card style={{ width: 'min(1200px, 96vw)', maxHeight: '88vh', overflow: 'auto' }}><div className="toolbar"><h2>Prévisualisation de l’import</h2><Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Fermer</Button></div><div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Button variant="secondary" style={{ background: activeImportTab === 'entries' ? '#0f172a' : undefined, color: activeImportTab === 'entries' ? '#fff' : undefined }} onClick={() => setActiveImportTab('entries')}>Liste des entrées ({importRows.length})</Button><Button variant="secondary" style={{ background: activeImportTab === 'anomalies' ? '#0f172a' : undefined, color: activeImportTab === 'anomalies' ? '#fff' : undefined }} onClick={() => setActiveImportTab('anomalies')}>Anomalies ({anomalyRows.length})</Button></div>{activeImportTab === 'entries' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell></TableRow></TableHead><TableBody>{importRows.map((row) => <TableRow key={`valid-${row.row_number}`}><TableCell>{row.row_number}</TableCell><TableCell>{row.designation}</TableCell><TableCell>{row.nature}</TableCell><TableCell>{row.pct_code || '-'}</TableCell><TableCell>{row.barcode || '(auto)'}</TableCell><TableCell>{row.purchase_unit_price_ht}</TableCell><TableCell>{row.vat_rate_label}</TableCell><TableCell>{row.laboratory_designation}</TableCell></TableRow>)}</TableBody></Table></div>}{activeImportTab === 'anomalies' && <div style={{ overflow: 'auto', marginTop: 12 }}><Table><TableHead><TableRow><TableHeaderCell>Ligne</TableHeaderCell><TableHeaderCell>Désignation</TableHeaderCell><TableHeaderCell>Nature</TableHeaderCell><TableHeaderCell>PCT</TableHeaderCell><TableHeaderCell>Code barre</TableHeaderCell><TableHeaderCell>PUA HT</TableHeaderCell><TableHeaderCell>TVA</TableHeaderCell><TableHeaderCell>Laboratoire</TableHeaderCell><TableHeaderCell>Erreurs</TableHeaderCell><TableHeaderCell /></TableRow></TableHead><TableBody>{anomalyRows.map((row) => <TableRow key={`anomaly-${row.row_number}`}><TableCell>{row.row_number}</TableCell>{(['designation', 'nature', 'pct_code', 'barcode', 'purchase_unit_price_ht', 'vat_rate_label', 'laboratory_designation'] as EditableAnomalyField[]).map((field) => <TableCell key={`${row.row_number}-${field}`}>{editingCell?.row === row.row_number && editingCell.field === field ? <Input autoFocus value={String(row[field])} onBlur={() => setEditingCell(null)} onChange={(e) => setAnomalyField(row.row_number, field, e.target.value)} /> : <button type="button" onClick={() => setEditingCell({ row: row.row_number, field })} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', textAlign: 'left', width: '100%' }}>{String(row[field]) || '-'}</button>}</TableCell>)}<TableCell><ul style={{ margin: 0, paddingLeft: 18, color: '#b42318' }}>{row.errors.map((err) => <li key={`${row.row_number}-${err}`}>{err}</li>)}</ul></TableCell><TableCell><Button variant="secondary" onClick={() => { const updated = revalidateAnomalyRow(row); if (updated) setAnomalyRows((c) => c.map((r) => r.row_number === row.row_number ? updated : r)); }}>Vérifier</Button></TableCell></TableRow>)}</TableBody></Table></div>}<div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}><Button variant="secondary" onClick={() => setIsImportModalOpen(false)}>Annuler</Button><Button onClick={() => void handleConfirmImport()} disabled={isImporting || importRows.length === 0 || anomalyRows.length > 0}>{isImporting ? 'Import en cours...' : 'Valider et créer'}</Button></div></Card></div>}
+    <div style={{ position: 'fixed', top: 20, right: 20, display: 'grid', gap: 10, zIndex: 60 }}>{toasts.map((toast) => <Card key={toast.id} style={{ width: 360, border: '1px solid #fda29b', background: '#fef3f2' }}><strong style={{ color: '#b42318' }}>{toast.title}</strong><ul style={{ margin: '8px 0 0', paddingLeft: 18, color: '#b42318' }}>{toast.lines.map((line) => <li key={`${toast.id}-${line}`}>{line}</li>)}</ul></Card>)}</div>
     {isModalOpen && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}><Card><div className="toolbar"><h2>{editingId ? 'Modifier le produit' : 'Ajouter un produit'}</h2><Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button></div><form className="grid" onSubmit={handleSubmit}><Input placeholder="Désignation" value={form.designation} onChange={(e) => setForm((c) => ({ ...c, designation: e.target.value }))} required /><Select value={form.nature} onChange={(e) => setForm((c) => ({ ...c, nature: e.target.value as ProductNature }))}><option value="medicament">Médicament</option><option value="para">Para</option></Select><Input placeholder="Code PCT (obligatoire pour médicament)" value={form.pct_code} onChange={(e) => setForm((c) => ({ ...c, pct_code: e.target.value }))} /><Input placeholder="Code barre (vide = PCT ou génération auto)" value={form.barcode} onChange={(e) => setForm((c) => ({ ...c, barcode: e.target.value }))} /><Input type="number" min="0" step="0.001" placeholder="PUA HT" value={form.purchase_unit_price_ht} onChange={(e) => setForm((c) => ({ ...c, purchase_unit_price_ht: e.target.value }))} required /><Select value={form.vat_rate_id} onChange={(e) => setForm((c) => ({ ...c, vat_rate_id: e.target.value }))} required><option value="" disabled>Sélectionner un taux TVA</option>{vatRates.map((r) => <option key={r.id} value={r.id}>{r.label} ({r.rate}%)</option>)}</Select><Select value={form.laboratory_id} onChange={(e) => setForm((c) => ({ ...c, laboratory_id: e.target.value }))} required><option value="" disabled>Sélectionner un laboratoire</option>{laboratories.map((l) => <option key={l.id} value={l.id}>{l.designation}</option>)}</Select>{fieldError && <p style={{ color: '#b42318' }}>{fieldError}</p>}<Button type="submit" disabled={isSaving}>{actionLabel}</Button></form></Card></div>}
   </div>;
 };
