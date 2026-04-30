@@ -21,7 +21,17 @@ import {
 
 const PAGE_SIZE = 8;
 const EMPTY_FORM = { designation: '', nature: 'medicament' as ProductNature, pct_code: '', barcode: '', purchase_unit_price_ht: '', vat_rate_id: '', laboratory_id: '' };
-const IMPORT_HEADERS = ['designation', 'nature', 'pct_code', 'barcode', 'purchase_unit_price_ht', 'vat_rate_label', 'laboratory_designation'];
+const IMPORT_COLUMNS = [
+  { key: 'designation', label: 'Désignation', description: 'Nom commercial du produit (obligatoire).' },
+  { key: 'nature', label: 'Nature', description: 'Valeur attendue: medicament ou para.' },
+  { key: 'pct_code', label: 'Code PCT', description: 'Obligatoire si Nature = medicament.' },
+  { key: 'barcode', label: 'Code barre', description: 'Code barre produit. Peut être vide (génération auto).' },
+  { key: 'purchase_unit_price_ht', label: 'PUA HT', description: 'Prix unitaire d’achat HT (nombre >= 0).' },
+  { key: 'vat_rate_label', label: 'Taux TVA', description: 'Libellé exact d’un taux TVA existant (ex: TVA 7%).' },
+  { key: 'laboratory_designation', label: 'Laboratoire', description: 'Désignation exacte d’un laboratoire existant.' },
+] as const;
+const IMPORT_HEADERS = IMPORT_COLUMNS.map((column) => column.key);
+const IMPORT_HEADER_LABELS = Object.fromEntries(IMPORT_COLUMNS.map((column) => [column.key, column.label])) as Record<string, string>;
 type ImportRow = {
   row_number: number;
   designation: string;
@@ -138,9 +148,16 @@ export const ProductsPage = () => {
   const openEditModal = (p: ManagedProduct) => { setEditingId(p.id); setForm({ designation: p.designation, nature: p.nature, pct_code: p.pct_code ?? '', barcode: p.barcode, purchase_unit_price_ht: String(p.purchase_unit_price_ht), vat_rate_id: p.vat_rate_id, laboratory_id: p.laboratory_id }); setFieldError(null); setIsModalOpen(true); };
 
   const handleDownloadTemplate = () => {
-    const sheet = XLSX.utils.json_to_sheet([Object.fromEntries(IMPORT_HEADERS.map((h) => [h, '']))], { header: IMPORT_HEADERS, skipHeader: false });
+    const userHeaders = IMPORT_COLUMNS.map((column) => column.label);
+    const sheet = XLSX.utils.json_to_sheet([Object.fromEntries(userHeaders.map((h) => [h, '']))], { header: userHeaders, skipHeader: false });
+    const helpSheet = XLSX.utils.json_to_sheet(IMPORT_COLUMNS.map((column) => ({
+      'Colonne (Excel)': column.label,
+      'Clé technique (code)': column.key,
+      'Description': column.description,
+    })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, sheet, 'produits');
+    XLSX.utils.book_append_sheet(wb, helpSheet, 'description_champs');
     XLSX.writeFile(wb, 'modele_import_produits.xlsx');
   };
 
@@ -151,7 +168,14 @@ export const ProductsPage = () => {
     const arrayBuffer = await file.arrayBuffer();
     const wb = XLSX.read(arrayBuffer, { type: 'array' });
     const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+    const rawWithFrenchHeaders = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+    const raw = rawWithFrenchHeaders.map((row) => {
+      const mapped: Record<string, unknown> = {};
+      IMPORT_HEADERS.forEach((key) => {
+        mapped[key] = row[IMPORT_HEADER_LABELS[key]] ?? row[key] ?? '';
+      });
+      return mapped;
+    });
     if (!raw.length) {
       setImportErrors(['Le fichier est vide.']);
       setIsImportModalOpen(true);
