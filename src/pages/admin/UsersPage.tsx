@@ -19,6 +19,27 @@ type UserRow = {
   is_banned: boolean;
 };
 
+
+const mapProfilesToRows = (profiles: Array<{
+  id: string;
+  full_name: string;
+  role: 'admin' | 'pharmacy_user';
+  pharmacy_id: string | null;
+  created_at: string;
+  is_banned?: boolean | null;
+  pharmacies: { name: string | null }[] | null;
+}>): UserRow[] => profiles.map((profile) => ({
+  user_id: profile.id,
+  email: null,
+  email_confirmed_at: null,
+  created_at: profile.created_at,
+  full_name: profile.full_name,
+  role: profile.role,
+  pharmacy_id: profile.pharmacy_id,
+  pharmacy_name: profile.pharmacies?.[0]?.name ?? null,
+  is_banned: Boolean(profile.is_banned),
+}));
+
 export const UsersPage = () => {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [search, setSearch] = useState('');
@@ -34,8 +55,36 @@ export const UsersPage = () => {
     const { data, error: queryError } = await supabase.rpc('admin_list_users');
 
     if (queryError) {
-      setError(queryError.message);
-      setUsers([]);
+      const rpcMissing = queryError.message.toLowerCase().includes('could not find the function public.admin_list_users');
+      if (!rpcMissing) {
+        setError(queryError.message);
+        setUsers([]);
+        setIsLoading(false);
+        return;
+      }
+
+      const { data: profileRows, error: fallbackError } = await supabase
+        .from('profiles')
+        .select('id, full_name, role, pharmacy_id, created_at, is_banned, pharmacies(name)')
+        .order('created_at', { ascending: false });
+
+      if (fallbackError) {
+        setError(`${queryError.message}. Fallback profiles échoué: ${fallbackError.message}`);
+        setUsers([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setError('Fonction RPC `admin_list_users` absente sur ce projet Supabase. Affichage en mode dégradé via `profiles` uniquement. Appliquez les migrations Supabase.');
+      setUsers(mapProfilesToRows((profileRows ?? []) as Array<{
+        id: string;
+        full_name: string;
+        role: 'admin' | 'pharmacy_user';
+        pharmacy_id: string | null;
+        created_at: string;
+        is_banned?: boolean | null;
+        pharmacies: { name: string | null }[] | null;
+      }>));
       setIsLoading(false);
       return;
     }
