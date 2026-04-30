@@ -70,7 +70,7 @@ export const ProductsPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   // Compat guard: referenced by older selection callbacks still mounted in some client bundles.
-  const [, setSelectedProductIds] = useState<string[]>([]);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [anomalyRows, setAnomalyRows] = useState<ImportAnomalyRow[]>([]);
@@ -319,7 +319,7 @@ export const ProductsPage = () => {
     } catch (error) { setFeedback(error instanceof Error ? error.message : 'Archivage impossible.'); }
   };
 
-  return <div className="grid">{/* shortened intentionally */}
+  return <div className="grid" data-selected-count={selectedProductIds.length}>{/* shortened intentionally */}
     <Card><h1>Produits</h1><p>Tableau des produits avec actions d’archivage et d’édition.</p>{feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}</Card>
     <Card style={{ minHeight: "72vh", display: "flex", flexDirection: "column" }}>
       <div className="toolbar"><h2>Catalogue</h2><div style={{ display: 'flex', gap: 8 }}><Button variant="secondary" onClick={handleDownloadTemplate}>Télécharger le modèle Excel</Button><Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Importer</Button><Button onClick={openCreateModal}>+ Ajouter un produit</Button></div></div>
