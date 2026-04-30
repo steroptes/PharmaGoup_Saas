@@ -21,7 +21,9 @@ export const AppShell = () => {
             <h2>PharmaGroup</h2>
             <p>{user.full_name}</p>
           </div>
-          <Badge>{user.role}</Badge>
+          <div className="sidebar-role-badge">
+            <Badge>{user.role}</Badge>
+          </div>
         </div>
         <nav>
           <Link to="/">Tableau de bord</Link>
@@ -41,24 +43,32 @@ export const AppShell = () => {
               <Link to="/admin/groupage">Groupage</Link>
               <hr className="sidebar-divider" />
               <Link to="/admin/users">Utilisateurs</Link>
-              <Link to="/admin/profile">Gestion du profil</Link>
             </>
           )}
         </nav>
-        {isAdmin && (
-          <Link to="/admin/settings" className="sidebar-settings-link">
-            Paramètres
-          </Link>
-        )}
-        <Button
-          variant="secondary"
-          type="button"
-          onClick={() => {
-            void supabase.auth.signOut();
-          }}
-        >
-          Se déconnecter
-        </Button>
+        <div className="sidebar-footer">
+          {isAdmin && (
+            <>
+              <hr className="sidebar-divider" />
+              <Link to="/admin/profile" className="sidebar-settings-link">
+                Gestion du profil
+              </Link>
+              <hr className="sidebar-divider" />
+              <Link to="/admin/settings" className="sidebar-settings-link">
+                Paramètres
+              </Link>
+            </>
+          )}
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={() => {
+              void supabase.auth.signOut();
+            }}
+          >
+            Se déconnecter
+          </Button>
+        </div>
       </aside>
       <main className="main">
         <Outlet />
