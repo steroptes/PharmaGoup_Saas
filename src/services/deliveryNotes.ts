@@ -29,37 +29,23 @@ const isMissingTableError = (message: string, tableName: string) => {
 };
 
 export const fetchSuppliers = async (): Promise<SupplierOption[]> => {
-  const { data: laboratoryRows, error: laboratoryError } = await supabase
+  const labQuery = await supabase
     .from('laboratories')
     .select('id, designation')
     .order('designation', { ascending: true });
 
-  if (!laboratoryError) {
-    return (laboratoryRows ?? []).map(({ id, designation }) => ({ id, name: designation }));
-  }
+  if (!labQuery.error) return (labQuery.data ?? []).map(({ id, designation }) => ({ id, name: designation }));
 
-  const isMissingLaboratoriesTable = isMissingTableError(laboratoryError.message, 'laboratories');
-  if (!isMissingLaboratoriesTable) throw new Error(laboratoryError.message);
+  if (!isMissingTableError(labQuery.error.message, 'laboratories')) throw new Error(labQuery.error.message);
 
-  const { data, error } = await supabase
+  const supplierQuery = await supabase
     .from('suppliers')
     .select('id, name')
     .order('name', { ascending: true });
 
-  if (!error) return data ?? [];
+  if (supplierQuery.error) throw new Error(supplierQuery.error.message);
 
-  const normalized = error.message.toLowerCase();
-  const isMissingSuppliersTable = normalized.includes('could not find the table') && normalized.includes('suppliers');
-  if (!isMissingSuppliersTable) throw new Error(error.message);
-
-  const { data: laboratoryRows, error: laboratoryError } = await supabase
-    .from('laboratories')
-    .select('id, designation')
-    .order('designation', { ascending: true });
-
-  if (laboratoryError) throw new Error(laboratoryError.message);
-
-  return (laboratoryRows ?? []).map(({ id, designation }) => ({ id, name: designation }));
+  return supplierQuery.data ?? [];
 };
 
 export const fetchCampaignsForPharmacy = async (
