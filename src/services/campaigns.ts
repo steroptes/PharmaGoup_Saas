@@ -10,18 +10,57 @@ export type CampaignRow = {
   end_date: string;
   status: CampaignStatus;
   created_at: string;
-  supplier: { name: string } | null;
-  campaign_participants: Array<{ count: number }>;
+  supplier_name: string | null;
+  participants_count: number;
 };
 
 export const listCampaigns = async () => {
   const { data, error } = await supabase
     .from('campaigns')
-    .select('id, name, supplier_id, start_date, end_date, status, created_at, supplier:suppliers(name), campaign_participants(count)')
+    .select('id, name, supplier_id, start_date, end_date, status, created_at, suppliers(name)')
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as CampaignRow[];
+
+  const campaigns = (data ?? []) as Array<{
+    id: string;
+    name: string;
+    supplier_id: string;
+    start_date: string;
+    end_date: string;
+    status: CampaignStatus;
+    created_at: string;
+    suppliers: Array<{ name: string }> | null;
+  }>;
+
+  const campaignIds = campaigns.map((campaign) => campaign.id);
+  let participantsCountByCampaign = new Map<string, number>();
+
+  if (campaignIds.length) {
+    const { data: participantsRows, error: participantsError } = await supabase
+      .from('campaign_participants')
+      .select('campaign_id')
+      .in('campaign_id', campaignIds);
+
+    if (participantsError) throw new Error(participantsError.message);
+
+    participantsCountByCampaign = (participantsRows ?? []).reduce((acc, row) => {
+      acc.set(row.campaign_id, (acc.get(row.campaign_id) ?? 0) + 1);
+      return acc;
+    }, new Map<string, number>());
+  }
+
+  return campaigns.map((campaign) => ({
+    id: campaign.id,
+    name: campaign.name,
+    supplier_id: campaign.supplier_id,
+    start_date: campaign.start_date,
+    end_date: campaign.end_date,
+    status: campaign.status,
+    created_at: campaign.created_at,
+    supplier_name: campaign.suppliers?.[0]?.name ?? null,
+    participants_count: participantsCountByCampaign.get(campaign.id) ?? 0,
+  })) as CampaignRow[];
 };
 
 export const createCampaign = async (payload: {

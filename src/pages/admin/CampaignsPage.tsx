@@ -6,6 +6,7 @@ import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
 import { listLaboratories, Laboratory } from '@/services/laboratories';
+import { supabase } from '@/lib/supabase';
 import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
 const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
@@ -24,27 +25,44 @@ export const CampaignsPage = () => {
 
   const loadData = async () => {
     setIsLoading(true);
-    try {
-      const [campaignsData, laboratoriesData, pharmaciesData] = await Promise.all([
-        listCampaigns(),
-        listLaboratories(),
-        listPharmacies(),
-      ]);
-      setCampaigns(campaignsData);
-      setLaboratories(laboratoriesData);
-      setPharmacies(pharmaciesData.filter((item) => item.is_active));
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Impossible de charger les campagnes.');
-    } finally {
-      setIsLoading(false);
+    setFeedback(null);
+
+    const [campaignsResult, laboratoriesResult, pharmaciesResult] = await Promise.allSettled([
+      listCampaigns(),
+      listLaboratories(),
+      listPharmacies(),
+    ]);
+
+    if (campaignsResult.status === 'fulfilled') {
+      setCampaigns(campaignsResult.value);
+    } else {
+      setCampaigns([]);
+      setFeedback(campaignsResult.reason instanceof Error ? campaignsResult.reason.message : 'Impossible de charger les campagnes.');
     }
+
+    if (laboratoriesResult.status === 'fulfilled') {
+      setLaboratories(laboratoriesResult.value);
+    } else {
+      const { data: supplierFallback } = await supabase.from('suppliers').select('id, name').order('name', { ascending: true });
+      setLaboratories((supplierFallback ?? []).map((item) => ({ id: item.id, designation: item.name, tax_identifier: null, address: null, mobile_phone: null, landline_phone: null, created_at: '' })));
+      setFeedback((current) => current ?? 'Chargement laboratoires principal indisponible: fallback fournisseurs activé.');
+    }
+
+    if (pharmaciesResult.status === 'fulfilled') {
+      setPharmacies(pharmaciesResult.value.filter((item) => item.is_active));
+    } else {
+      setPharmacies([]);
+      setFeedback((current) => current ?? (pharmaciesResult.reason instanceof Error ? pharmaciesResult.reason.message : 'Impossible de charger les pharmacies.'));
+    }
+
+    setIsLoading(false);
   };
 
   useEffect(() => { void loadData(); }, []);
 
   const filteredCampaigns = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier?.name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
+    return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier_name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
   }, [campaigns, searchQuery]);
 
   const togglePharmacy = (pharmacyId: string) => {
@@ -126,10 +144,10 @@ export const CampaignsPage = () => {
                 {filteredCampaigns.map((campaign) => (
                   <TableRow key={campaign.id}>
                     <TableCell>{campaign.name}</TableCell>
-                    <TableCell>{campaign.supplier?.name ?? '-'}</TableCell>
+                    <TableCell>{campaign.supplier_name ?? '-'}</TableCell>
                     <TableCell>{campaign.start_date}</TableCell>
                     <TableCell>{campaign.end_date}</TableCell>
-                    <TableCell>{campaign.campaign_participants?.[0]?.count ?? 0}</TableCell>
+                    <TableCell>{campaign.participants_count}</TableCell>
                     <TableCell>{campaign.status}</TableCell>
                     <TableCell>
                       <ActionDropdown
@@ -168,6 +186,7 @@ export const CampaignsPage = () => {
               <div>
                 <p>Pharmacies concernées</p>
                 <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
+                  {!pharmacies.length && <p style={{ gridColumn: '1 / -1' }}>Aucune pharmacie active disponible.</p>}
                   {pharmacies.map((pharmacy) => (
                     <label key={pharmacy.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input type="checkbox" checked={selectedPharmacies.includes(pharmacy.id)} onChange={() => togglePharmacy(pharmacy.id)} />
