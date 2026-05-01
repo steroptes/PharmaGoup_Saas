@@ -23,6 +23,10 @@ export interface DeliveryNoteSubmissionInput {
 }
 
 const sanitizeFilename = (filename: string) => filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+const isMissingTableError = (message: string, tableName: string) => {
+  const lowerMessage = message.toLowerCase();
+  return lowerMessage.includes('could not find the table') && lowerMessage.includes(tableName.toLowerCase());
+};
 
 export const fetchSuppliers = async (): Promise<SupplierOption[]> => {
   const { data: laboratoryRows, error: laboratoryError } = await supabase
@@ -34,8 +38,7 @@ export const fetchSuppliers = async (): Promise<SupplierOption[]> => {
     return (laboratoryRows ?? []).map(({ id, designation }) => ({ id, name: designation }));
   }
 
-  const normalized = laboratoryError.message.toLowerCase();
-  const isMissingLaboratoriesTable = normalized.includes('could not find the table') && normalized.includes('laboratories');
+  const isMissingLaboratoriesTable = isMissingTableError(laboratoryError.message, 'laboratories');
   if (!isMissingLaboratoriesTable) throw new Error(laboratoryError.message);
 
   const { data, error } = await supabase
