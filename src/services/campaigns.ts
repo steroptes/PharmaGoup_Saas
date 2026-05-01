@@ -14,13 +14,22 @@ export type CampaignRow = {
   participants_count: number;
 };
 
+
+const formatCampaignTableError = (message: string) => {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("could not find the table") && normalized.includes("campaign")) {
+    return "La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.";
+  }
+  return message;
+};
+
 export const listCampaigns = async () => {
   const { data, error } = await supabase
     .from('campaigns')
     .select('id, name, supplier_id, start_date, end_date, status, created_at, suppliers(name)')
     .order('created_at', { ascending: false });
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(formatCampaignTableError(error.message));
 
   const campaigns = (data ?? []) as Array<{
     id: string;
@@ -42,7 +51,7 @@ export const listCampaigns = async () => {
       .select('campaign_id')
       .in('campaign_id', campaignIds);
 
-    if (participantsError) throw new Error(participantsError.message);
+    if (participantsError) throw new Error(formatCampaignTableError(participantsError.message));
 
     participantsCountByCampaign = (participantsRows ?? []).reduce((acc, row) => {
       acc.set(row.campaign_id, (acc.get(row.campaign_id) ?? 0) + 1);
@@ -82,17 +91,17 @@ export const createCampaign = async (payload: {
     .select('id')
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(formatCampaignTableError(error.message));
 
   if (payload.pharmacy_ids.length) {
     const { error: participantsError } = await supabase.from('campaign_participants').insert(
       payload.pharmacy_ids.map((pharmacyId) => ({ campaign_id: data.id, pharmacy_id: pharmacyId })),
     );
-    if (participantsError) throw new Error(participantsError.message);
+    if (participantsError) throw new Error(formatCampaignTableError(participantsError.message));
   }
 };
 
 export const updateCampaignStatus = async (campaignId: string, status: CampaignStatus) => {
   const { error } = await supabase.from('campaigns').update({ status }).eq('id', campaignId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(formatCampaignTableError(error.message));
 };
