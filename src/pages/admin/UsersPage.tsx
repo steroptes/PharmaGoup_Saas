@@ -153,14 +153,24 @@ export const UsersPage = () => {
 
   const resendVerificationEmail = async (user: UserRow) => {
     if (!user.email) return;
+    if (user.email_confirmed_at) {
+      showToast(`L'adresse ${user.email} est déjà confirmée.`);
+      return;
+    }
+
     const { error: resendError } = await supabase.auth.resend({
       type: 'signup',
       email: user.email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/verify-email`,
+      },
     });
+
     if (resendError) {
       setError(`Relance email échouée pour ${user.email}: ${resendError.message}`);
       return;
     }
+
     showToast(`Email de vérification renvoyé à ${user.email}.`);
   };
 
@@ -247,7 +257,7 @@ export const UsersPage = () => {
                 </TableCell>
                 <TableCell>
                   <div className="actions user-actions">
-                    <Button variant="secondary" disabled={!user.email} onClick={() => void resendVerificationEmail(user)}>Relancer email</Button>
+                    <Button variant="secondary" disabled={!user.email || Boolean(user.email_confirmed_at)} onClick={() => void resendVerificationEmail(user)}>{user.email_confirmed_at ? 'Email déjà confirmé' : 'Relancer email'}</Button>
                     <Button variant="secondary" disabled={!user.email} onClick={() => void sendResetPasswordEmail(user)}>Réinit. mot de passe</Button>
                     <Button variant="danger" disabled={!user.role} onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
                     <Button variant="danger" disabled={!user.role} onClick={() => void deleteUser(user)}>Supprimer profil</Button>
