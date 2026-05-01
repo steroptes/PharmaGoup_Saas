@@ -33,6 +33,7 @@ export const CampaignsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
   const navigate = useNavigate();
 
   const loadData = async () => {
