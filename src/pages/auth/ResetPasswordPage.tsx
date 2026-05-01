@@ -50,11 +50,13 @@ export const ResetPasswordPage = () => {
     }
 
     setIsSuccess(true);
-    setStatus('Mot de passe mis à jour avec succès. Redirection vers la page de connexion...');
+    setStatus('Mot de passe mis à jour avec succès. Déconnexion puis redirection vers la page de connexion...');
     setLoading(false);
+
+    await supabase.auth.signOut();
     window.setTimeout(() => {
       navigate('/auth/login', { replace: true });
-    }, 1400);
+    }, 900);
   };
 
   return (
