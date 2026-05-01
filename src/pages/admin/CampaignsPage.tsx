@@ -20,6 +20,7 @@ const CAMPAIGN_MIGRATIONS = [
 const isMissingCampaignSchema = (message: string | null) =>
   !!message && message.toLowerCase().includes('table supabase des campagnes est absente');
 
+const PAGE_SIZE = 10;
 
 export const CampaignsPage = () => {
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
@@ -76,6 +77,13 @@ export const CampaignsPage = () => {
     return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier_name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
   }, [campaigns, searchQuery]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / PAGE_SIZE));
+  const paginatedCampaigns = useMemo(() => filteredCampaigns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredCampaigns, page]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   const togglePharmacy = (pharmacyId: string) => {
     setSelectedPharmacies((current) => current.includes(pharmacyId) ? current.filter((id) => id !== pharmacyId) : [...current, pharmacyId]);
   };
@@ -129,7 +137,7 @@ export const CampaignsPage = () => {
 
   return (
     <div className="grid">
-      <Card>
+      <Card style={{ minHeight: "calc(100vh - 180px)", display: "flex", flexDirection: "column" }}>
         <div className="toolbar">
           <div>
             <h1>Campagnes d&apos;achat</h1>
@@ -138,7 +146,7 @@ export const CampaignsPage = () => {
           <Button onClick={openModal}>Nouvelle campagne</Button>
         </div>
         <div className="toolbar" style={{ marginTop: 12 }}>
-          <Input placeholder="Rechercher une campagne" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+          <Input placeholder="Rechercher une campagne" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setPage(1); }} />
         </div>
         {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
         {isMissingCampaignSchema(feedback) && (
@@ -152,7 +160,7 @@ export const CampaignsPage = () => {
         )}
 
         {!isLoading && (
-          <div style={{ overflow: 'auto', marginTop: 12 }}>
+          <div style={{ overflow: 'auto', marginTop: 12, flex: 1 }}>
             <Table>
               <TableHead>
                 <TableRow>
@@ -166,7 +174,7 @@ export const CampaignsPage = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredCampaigns.map((campaign) => (
+                {paginatedCampaigns.map((campaign) => (
                   <TableRow key={campaign.id}>
                     <TableCell>{campaign.name}</TableCell>
                     <TableCell>{campaign.supplier_name ?? '-'}</TableCell>
@@ -188,6 +196,16 @@ export const CampaignsPage = () => {
                 ))}
               </TableBody>
             </Table>
+          </div>
+        )}
+
+        {!isLoading && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+            <p style={{ margin: 0 }}>Page {page} / {totalPages} — {filteredCampaigns.length} campagne(s)</p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="secondary" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Précédent</Button>
+              <Button variant="secondary" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}>Suivant</Button>
+            </div>
           </div>
         )}
       </Card>
