@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ActionDropdown } from '@/components/ui/dropdown-menu';
@@ -32,7 +33,7 @@ export const CampaignsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [page, setPage] = useState(1);
+  const navigate = useNavigate();
 
   const loadData = async () => {
     setIsLoading(true);
@@ -179,6 +180,7 @@ export const CampaignsPage = () => {
                     <TableCell>
                       <ActionDropdown
                         actions={[
+                          { label: 'Paramétrer', onClick: () => navigate(`/admin/campaigns/${campaign.id}/setup`) },
                           { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
                           { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
                           { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
