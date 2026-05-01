@@ -105,6 +105,34 @@ export const createCampaign = async (payload: {
   }
 };
 
+export const getCampaignById = async (campaignId: string) => {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select('id, name, supplier_id, start_date, end_date, status, created_at')
+    .eq('id', campaignId)
+    .single();
+
+  if (error) throw new Error(formatCampaignTableError(error.message));
+  return data as Omit<CampaignRow, 'supplier_name' | 'participants_count'>;
+};
+
+export const updateCampaignDetails = async (
+  campaignId: string,
+  payload: { name: string; supplier_id: string; start_date: string; end_date: string },
+) => {
+  const { error } = await supabase
+    .from('campaigns')
+    .update({
+      name: payload.name,
+      supplier_id: payload.supplier_id,
+      start_date: payload.start_date,
+      end_date: payload.end_date,
+    })
+    .eq('id', campaignId);
+
+  if (error) throw new Error(formatCampaignTableError(error.message));
+};
+
 export const updateCampaignStatus = async (campaignId: string, status: CampaignStatus) => {
   const { error } = await supabase.from('campaigns').update({ status }).eq('id', campaignId);
   if (error) throw new Error(formatCampaignTableError(error.message));

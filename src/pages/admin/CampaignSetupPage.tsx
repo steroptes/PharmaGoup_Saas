@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input, Select } from '@/components/ui/input';
+import { getCampaignById, updateCampaignDetails } from '@/services/campaigns';
+import { Laboratory, listLaboratories } from '@/services/laboratories';
 
 type StepKey = 'details' | 'audience' | 'validation';
 
@@ -12,15 +14,65 @@ export const CampaignSetupPage = () => {
   const navigate = useNavigate();
   const { campaignId } = useParams();
   const [step, setStep] = useState<StepKey>('details');
-  const [name, setName] = useState('Campagne été 2026');
+  const [name, setName] = useState('');
+  const [laboratoryId, setLaboratoryId] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(true);
+  const [isSavingDetails, setIsSavingDetails] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [subdomain, setSubdomain] = useState('offres');
   const [domain, setDomain] = useState('pharmagroup.tn');
-  const [supplier, setSupplier] = useState('Laboratoire Central');
   const [trackingClick, setTrackingClick] = useState(true);
   const [trackingOpen, setTrackingOpen] = useState(false);
 
   const index = STEP_ORDER.indexOf(step);
   const completion = useMemo(() => Math.round(((index + 1) / STEP_ORDER.length) * 100), [index]);
+
+  useEffect(() => {
+    const loadSetupDetails = async () => {
+      if (!campaignId) {
+        setFeedback('Identifiant de campagne introuvable.');
+        setIsLoadingDetails(false);
+        return;
+      }
+
+      setIsLoadingDetails(true);
+      setFeedback(null);
+      try {
+        const [campaign, labs] = await Promise.all([getCampaignById(campaignId), listLaboratories()]);
+        setName(campaign.name);
+        setLaboratoryId(campaign.supplier_id ?? '');
+        setStartDate(campaign.start_date);
+        setEndDate(campaign.end_date);
+        setLaboratories(labs);
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : 'Impossible de charger les détails de la campagne.');
+      } finally {
+        setIsLoadingDetails(false);
+      }
+    };
+
+    void loadSetupDetails();
+  }, [campaignId]);
+
+  const saveDetails = async () => {
+    if (!campaignId) return;
+    if (!name.trim() || !laboratoryId || !startDate || !endDate) return setFeedback('Tous les champs de la section Détails sont obligatoires.');
+    if (endDate < startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
+
+    setIsSavingDetails(true);
+    setFeedback(null);
+    try {
+      await updateCampaignDetails(campaignId, { name: name.trim(), supplier_id: laboratoryId, start_date: startDate, end_date: endDate });
+      setFeedback('Détails de campagne mis à jour.');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Enregistrement des détails impossible.');
+    } finally {
+      setIsSavingDetails(false);
+    }
+  };
 
   return (
     <div className="grid" style={{ gap: 18 }}>
@@ -80,7 +132,20 @@ export const CampaignSetupPage = () => {
                 </div>
                 <div>
                   <label>Laboratoire</label>
-                  <Input value={supplier} onChange={(e) => setSupplier(e.target.value)} />
+                  <Select value={laboratoryId} onChange={(e) => setLaboratoryId(e.target.value)}>
+                    <option value="">Sélectionner un laboratoire</option>
+                    {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-2">
+                <div>
+                  <label>Date d&apos;ouverture</label>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </div>
+                <div>
+                  <label>Date de clôture</label>
+                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-2">
@@ -98,6 +163,11 @@ export const CampaignSetupPage = () => {
                 <label style={{ display: 'flex', gap: 8 }}><input type="checkbox" checked={trackingClick} onChange={() => setTrackingClick((v) => !v)} /> Activer le suivi des clics</label>
                 <label style={{ display: 'flex', gap: 8, marginTop: 8 }}><input type="checkbox" checked={trackingOpen} onChange={() => setTrackingOpen((v) => !v)} /> Activer le suivi des ouvertures</label>
               </div>
+              <div className="toolbar" style={{ justifyContent: 'space-between' }}>
+                <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{isLoadingDetails ? 'Chargement des informations initiales...' : 'Modifiez puis enregistrez les informations de création.'}</p>
+                <Button variant="secondary" onClick={() => void saveDetails()} disabled={isLoadingDetails || isSavingDetails}>{isSavingDetails ? 'Enregistrement...' : 'Enregistrer les détails'}</Button>
+              </div>
+              {feedback && <p style={{ margin: 0, fontSize: 13, color: '#344054' }}>{feedback}</p>}
             </div>
           )}
 

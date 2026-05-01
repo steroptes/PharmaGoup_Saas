@@ -46,9 +46,20 @@ export const fetchSuppliers = async (): Promise<SupplierOption[]> => {
     .select('id, name')
     .order('name', { ascending: true });
 
-  if (error) throw new Error(error.message);
+  if (!error) return data ?? [];
 
-  return data ?? [];
+  const normalized = error.message.toLowerCase();
+  const isMissingSuppliersTable = normalized.includes('could not find the table') && normalized.includes('suppliers');
+  if (!isMissingSuppliersTable) throw new Error(error.message);
+
+  const { data: laboratoryRows, error: laboratoryError } = await supabase
+    .from('laboratories')
+    .select('id, designation')
+    .order('designation', { ascending: true });
+
+  if (laboratoryError) throw new Error(laboratoryError.message);
+
+  return (laboratoryRows ?? []).map(({ id, designation }) => ({ id, name: designation }));
 };
 
 export const fetchCampaignsForPharmacy = async (
