@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { ActionDropdown } from '@/components/ui/dropdown-menu';
+import { ActionDropdown, DropdownAction } from '@/components/ui/dropdown-menu';
 import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
@@ -31,6 +32,7 @@ export const CampaignsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const navigate = useNavigate();
 
   const loadData = async () => {
     setIsLoading(true);
@@ -110,6 +112,18 @@ export const CampaignsPage = () => {
     }
   };
 
+
+  const goToSetup = (campaignId: string) => {
+    navigate(`/admin/campaigns/${campaignId}/setup`);
+  };
+
+  const campaignActions = (campaignId: string): DropdownAction[] => ([
+    { label: 'Paramétrer', onClick: () => goToSetup(campaignId) },
+    { label: 'Ouvrir', onClick: () => void changeStatus(campaignId, 'open') },
+    { label: 'Clôturer', onClick: () => void changeStatus(campaignId, 'closed') },
+    { label: 'Archiver', onClick: () => void changeStatus(campaignId, 'archived') },
+  ]);
+
   const changeStatus = async (campaignId: string, status: CampaignStatus) => {
     try {
       await updateCampaignStatus(campaignId, status);
@@ -168,13 +182,7 @@ export const CampaignsPage = () => {
                     <TableCell>{campaign.participants_count}</TableCell>
                     <TableCell>{campaign.status}</TableCell>
                     <TableCell>
-                      <ActionDropdown
-                        actions={[
-                          { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
-                          { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
-                          { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
-                        ]}
-                      />
+                      <ActionDropdown actions={campaignActions(campaign.id)} />
                     </TableCell>
                   </TableRow>
                 ))}
