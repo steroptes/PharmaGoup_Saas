@@ -73,8 +73,13 @@ export const CampaignsPage = () => {
   useEffect(() => { void loadData(); }, []);
 
   const filteredCampaigns = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier_name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return campaigns;
+
+    return campaigns.filter((campaign) => {
+      const searchable = [campaign.name, campaign.supplier_name ?? '', campaign.status];
+      return searchable.some((value) => value.toLowerCase().includes(query));
+    });
   }, [campaigns, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / PAGE_SIZE));
@@ -85,7 +90,12 @@ export const CampaignsPage = () => {
   }, [page, totalPages]);
 
   const togglePharmacy = (pharmacyId: string) => {
-    setSelectedPharmacies((current) => current.includes(pharmacyId) ? current.filter((id) => id !== pharmacyId) : [...current, pharmacyId]);
+    setSelectedPharmacies((current) => {
+      if (current.includes(pharmacyId)) {
+        return current.filter((id) => id !== pharmacyId);
+      }
+      return [...current, pharmacyId];
+    });
   };
 
   const openModal = () => {
