@@ -23,8 +23,11 @@ const FullPageLoader = () => <div className="auth-layout">Chargement de la sessi
 const isPasswordRecoveryFlow = (pathname: string, search: string, hash: string) => {
   if (pathname !== '/auth/reset-password') return false;
 
+  // Keep reset-password route accessible in guest flow even when Supabase
+  // has already consumed query/hash tokens and established a temporary session.
   const payload = `${search}${hash}`;
-  return payload.includes('type=recovery')
+  return payload.length === 0
+    || payload.includes('type=recovery')
     || payload.includes('access_token=')
     || payload.includes('refresh_token=')
     || payload.includes('token_hash=')
