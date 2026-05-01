@@ -6,21 +6,37 @@ export type Pharmacy = {
   is_active: boolean;
 };
 
-export const listPharmacies = async () => {
+const fromAdminUsersRpc = async (): Promise<Pharmacy[]> => {
+  const { data, error } = await supabase.rpc('admin_list_users');
+  if (error || !Array.isArray(data)) return [];
+
+  const unique = new Map<string, Pharmacy>();
+  for (const row of data) {
+    if (row?.role !== 'pharmacy_user') continue;
+    if (!row?.pharmacy_id || !row?.pharmacy_name) continue;
+    unique.set(row.pharmacy_id, { id: row.pharmacy_id, name: row.pharmacy_name, is_active: true });
+  }
+  return Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const fromPharmaciesTable = async (): Promise<Pharmacy[]> => {
   const { data, error } = await supabase
     .from('pharmacies')
     .select('id, name, is_active')
     .order('name', { ascending: true });
 
-  if (!error && (data ?? []).length > 0) return (data ?? []) as Pharmacy[];
+  if (error) return [];
+  return (data ?? []) as Pharmacy[];
+};
 
-  const { data: profileRows, error: profileError } = await supabase
+const fromProfilesJoin = async (): Promise<Pharmacy[]> => {
+  const { data: profileRows, error } = await supabase
     .from('profiles')
     .select('pharmacy_id, pharmacies(id, name, is_active)')
     .eq('role', 'pharmacy_user')
     .not('pharmacy_id', 'is', null);
 
-  if (profileError) throw new Error(profileError.message);
+  if (error) return [];
 
   const unique = new Map<string, Pharmacy>();
   for (const row of profileRows ?? []) {
@@ -28,6 +44,18 @@ export const listPharmacies = async () => {
     if (!linked?.id || !linked?.name) continue;
     unique.set(linked.id, { id: linked.id, name: linked.name, is_active: linked.is_active ?? true });
   }
-
   return Array.from(unique.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+export const listPharmacies = async () => {
+  const rpcRows = await fromAdminUsersRpc();
+  if (rpcRows.length) return rpcRows;
+
+  const tableRows = await fromPharmaciesTable();
+  if (tableRows.length) return tableRows;
+
+  const profileRows = await fromProfilesJoin();
+  if (profileRows.length) return profileRows;
+
+  return [];
 };
