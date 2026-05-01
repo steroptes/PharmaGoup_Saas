@@ -5,8 +5,12 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
 const hasRecoveryToken = () => {
-  const hash = window.location.hash;
-  return hash.includes('type=recovery') || hash.includes('access_token=');
+  const payload = `${window.location.search}${window.location.hash}`;
+  return payload.includes('type=recovery')
+    || payload.includes('access_token=')
+    || payload.includes('refresh_token=')
+    || payload.includes('token_hash=')
+    || payload.includes('code=');
 };
 
 export const ResetPasswordPage = () => {

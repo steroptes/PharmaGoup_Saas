@@ -129,25 +129,48 @@ export const UsersPage = () => {
   }), [users, search, roleFilter, banFilter]);
 
   const toggleBan = async (user: UserRow) => {
-    if (!user.role) return;
+    const nextValue = !user.is_banned;
 
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ is_banned: !user.is_banned })
-      .eq('id', user.user_id);
+    const { error: rpcError } = await supabase.rpc('admin_toggle_user_ban', {
+      p_user_id: user.user_id,
+      p_is_banned: nextValue,
+    });
 
-    if (!updateError) await loadUsers();
+    if (rpcError) {
+      const { error: fallbackError } = await supabase
+        .from('profiles')
+        .update({ is_banned: nextValue })
+        .eq('id', user.user_id);
+
+      if (fallbackError) {
+        setError(`Bannissement échoué pour ${user.full_name ?? user.email ?? user.user_id}: ${fallbackError.message}`);
+        return;
+      }
+    }
+
+    showToast(`${user.full_name ?? user.email ?? 'Utilisateur'} ${nextValue ? 'banni' : 'débanni'} avec succès.`);
+    await loadUsers();
   };
 
   const deleteUser = async (user: UserRow) => {
-    if (!user.role) return;
+    const { error: rpcError } = await supabase.rpc('admin_delete_user_account', {
+      p_user_id: user.user_id,
+    });
 
-    const { error: deleteError } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', user.user_id);
+    if (rpcError) {
+      const { error: fallbackError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', user.user_id);
 
-    if (!deleteError) await loadUsers();
+      if (fallbackError) {
+        setError(`Suppression échouée pour ${user.full_name ?? user.email ?? user.user_id}: ${fallbackError.message}`);
+        return;
+      }
+    }
+
+    showToast(`${user.full_name ?? user.email ?? 'Utilisateur'} supprimé avec succès.`);
+    await loadUsers();
   };
 
 
@@ -259,8 +282,8 @@ export const UsersPage = () => {
                   <div className="actions user-actions">
                     <Button variant="secondary" disabled={!user.email || Boolean(user.email_confirmed_at)} onClick={() => void resendVerificationEmail(user)}>{user.email_confirmed_at ? 'Email déjà confirmé' : 'Relancer email'}</Button>
                     <Button variant="secondary" disabled={!user.email} onClick={() => void sendResetPasswordEmail(user)}>Réinit. mot de passe</Button>
-                    <Button variant="danger" disabled={!user.role} onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
-                    <Button variant="danger" disabled={!user.role} onClick={() => void deleteUser(user)}>Supprimer profil</Button>
+                    <Button variant="danger" onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
+                    <Button variant="danger" onClick={() => void deleteUser(user)}>Supprimer</Button>
                   </div>
                 </TableCell>
               </TableRow>
