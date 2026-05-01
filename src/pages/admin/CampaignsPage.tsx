@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { ActionDropdown } from '@/components/ui/dropdown-menu';
+import { ActionDropdown, DropdownAction } from '@/components/ui/dropdown-menu';
 import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
@@ -31,6 +32,7 @@ export const CampaignsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const navigate = useNavigate();
 
   const loadData = async () => {
     setIsLoading(true);
@@ -70,12 +72,22 @@ export const CampaignsPage = () => {
   useEffect(() => { void loadData(); }, []);
 
   const filteredCampaigns = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier_name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return campaigns;
+
+    return campaigns.filter((campaign) => {
+      const searchable = [campaign.name, campaign.supplier_name ?? '', campaign.status];
+      return searchable.some((value) => value.toLowerCase().includes(query));
+    });
   }, [campaigns, searchQuery]);
 
   const togglePharmacy = (pharmacyId: string) => {
-    setSelectedPharmacies((current) => current.includes(pharmacyId) ? current.filter((id) => id !== pharmacyId) : [...current, pharmacyId]);
+    setSelectedPharmacies((current) => {
+      if (current.includes(pharmacyId)) {
+        return current.filter((id) => id !== pharmacyId);
+      }
+      return [...current, pharmacyId];
+    });
   };
 
   const openModal = () => {
@@ -109,6 +121,18 @@ export const CampaignsPage = () => {
       setIsSaving(false);
     }
   };
+
+
+  const goToSetup = (campaignId: string) => {
+    navigate(`/admin/campaigns/${campaignId}/setup`);
+  };
+
+  const campaignActions = (campaignId: string): DropdownAction[] => ([
+    { label: 'Paramétrer', onClick: () => goToSetup(campaignId) },
+    { label: 'Ouvrir', onClick: () => void changeStatus(campaignId, 'open') },
+    { label: 'Clôturer', onClick: () => void changeStatus(campaignId, 'closed') },
+    { label: 'Archiver', onClick: () => void changeStatus(campaignId, 'archived') },
+  ]);
 
   const changeStatus = async (campaignId: string, status: CampaignStatus) => {
     try {
@@ -168,13 +192,7 @@ export const CampaignsPage = () => {
                     <TableCell>{campaign.participants_count}</TableCell>
                     <TableCell>{campaign.status}</TableCell>
                     <TableCell>
-                      <ActionDropdown
-                        actions={[
-                          { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
-                          { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
-                          { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
-                        ]}
-                      />
+                      <ActionDropdown actions={campaignActions(campaign.id)} />
                     </TableCell>
                   </TableRow>
                 ))}

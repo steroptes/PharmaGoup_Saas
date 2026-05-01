@@ -5,6 +5,7 @@ import { HomePage } from '@/pages/HomePage';
 import { UploadPage } from '@/pages/pharmacy/UploadPage';
 import { CorrectionPage } from '@/pages/pharmacy/CorrectionPage';
 import { CampaignsPage } from '@/pages/admin/CampaignsPage';
+import { CampaignSetupPage } from '@/pages/admin/CampaignSetupPage';
 import { ReviewPage } from '@/pages/admin/ReviewPage';
 import { GroupagePage } from '@/pages/admin/GroupagePage';
 import { LaboratoriesPage } from '@/pages/admin/LaboratoriesPage';
@@ -95,6 +96,7 @@ export const AppRouter = () => (
 
         <Route element={<RequireRole role="admin" />}>
           <Route path="/admin/campaigns" element={<CampaignsPage />} />
+          <Route path="/admin/campaigns/:campaignId/setup" element={<CampaignSetupPage />} />
           <Route path="/admin/review" element={<ReviewPage />} />
           <Route path="/admin/groupage" element={<GroupagePage />} />
           <Route path="/admin/laboratories" element={<LaboratoriesPage />} />
