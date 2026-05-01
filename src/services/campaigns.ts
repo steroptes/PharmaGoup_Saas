@@ -23,11 +23,11 @@ const formatCampaignTableError = (message: string) => {
 };
 
 const loadOrganizationMap = async () => {
-  const { data: supplierRows, error: supplierError } = await supabase.from('suppliers').select('id, name');
-  if (!supplierError && supplierRows?.length) return new Map(supplierRows.map((row) => [row.id, row.name]));
-
   const { data: laboratoryRows, error: laboratoryError } = await supabase.from('laboratories').select('id, designation');
   if (!laboratoryError && laboratoryRows?.length) return new Map(laboratoryRows.map((row) => [row.id, row.designation]));
+
+  const { data: supplierRows, error: supplierError } = await supabase.from('suppliers').select('id, name');
+  if (!supplierError && supplierRows?.length) return new Map(supplierRows.map((row) => [row.id, row.name]));
 
   return new Map<string, string>();
 };
