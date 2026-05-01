@@ -1,262 +1,186 @@
-import { useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { ActionDropdown } from '@/components/ui/dropdown-menu';
 import { Input, Select } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
+import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
+import { listLaboratories, Laboratory } from '@/services/laboratories';
+import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
-type CampaignPhaseKey = 'intentions' | 'orders' | 'deliveries' | 'bonifications';
-
-type CampaignPhase = {
-  key: CampaignPhaseKey;
-  label: string;
-  required: boolean;
-  enabled: boolean;
-  startDate: string;
-  endDate: string;
-};
-
-const DEFAULT_PHASES: CampaignPhase[] = [
-  { key: 'intentions', label: "Recueil des intentions d'achat", required: false, enabled: false, startDate: '', endDate: '' },
-  { key: 'orders', label: 'Recueil des bons de commande', required: false, enabled: false, startDate: '', endDate: '' },
-  { key: 'deliveries', label: 'Recueil des bons de livraison', required: true, enabled: true, startDate: '', endDate: '' },
-  { key: 'bonifications', label: 'Régularisation des bonifications', required: false, enabled: true, startDate: '', endDate: '' },
-];
-
-const LABORATORY_OPTIONS = [
-  { id: 'lab-1', name: 'Laboratoire Alpha' },
-  { id: 'lab-2', name: 'Laboratoire Beta' },
-  { id: 'lab-3', name: 'Laboratoire Gamma' },
-];
-
-const PHARMACY_OPTIONS = [
-  'Pharmacie du Centre',
-  'Pharmacie Bellevue',
-  'Pharmacie Nouvelle',
-  'Pharmacie des Marchés',
-  'Pharmacie Santé Plus',
-];
-
-const PRODUCT_OPTIONS = [
-  'Paracétamol 500mg',
-  'Amoxicilline 1g',
-  'Vitamine C 1000',
-  'Sérum physiologique 500ml',
-  'Pansements stériles',
-];
+const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
 
 export const CampaignsPage = () => {
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [campaignName, setCampaignName] = useState('');
-  const [selectedLaboratory, setSelectedLaboratory] = useState('');
-  const [openDate, setOpenDate] = useState('');
-  const [closeDate, setCloseDate] = useState('');
+  const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
+  const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
+  const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [selectedPharmacies, setSelectedPharmacies] = useState<string[]>([]);
-  const [catalogMode, setCatalogMode] = useState<'reuse' | 'new'>('reuse');
-  const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
-  const [phases, setPhases] = useState<CampaignPhase[]>(DEFAULT_PHASES);
-  const [launchedCampaigns, setLaunchedCampaigns] = useState<Array<{ name: string; laboratory: string; openDate: string; closeDate: string; phases: string[] }>>([]);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const selectedLaboratoryLabel = useMemo(() => LABORATORY_OPTIONS.find((option) => option.id === selectedLaboratory)?.name ?? 'Laboratoire non défini', [selectedLaboratory]);
-
-  const toggleSelection = (value: string, selectedList: string[], setter: (values: string[]) => void) => {
-    setter(selectedList.includes(value) ? selectedList.filter((item) => item !== value) : [...selectedList, value]);
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const [campaignsData, laboratoriesData, pharmaciesData] = await Promise.all([
+        listCampaigns(),
+        listLaboratories(),
+        listPharmacies(),
+      ]);
+      setCampaigns(campaignsData);
+      setLaboratories(laboratoriesData);
+      setPharmacies(pharmaciesData.filter((item) => item.is_active));
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Impossible de charger les campagnes.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const updatePhase = (phaseKey: CampaignPhaseKey, patch: Partial<CampaignPhase>) => {
-    setPhases((current) => current.map((phase) => (phase.key === phaseKey ? { ...phase, ...patch } : phase)));
+  useEffect(() => { void loadData(); }, []);
+
+  const filteredCampaigns = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return campaigns.filter((campaign) => !q || [campaign.name, campaign.supplier?.name ?? '', campaign.status].some((value) => value.toLowerCase().includes(q)));
+  }, [campaigns, searchQuery]);
+
+  const togglePharmacy = (pharmacyId: string) => {
+    setSelectedPharmacies((current) => current.includes(pharmacyId) ? current.filter((id) => id !== pharmacyId) : [...current, pharmacyId]);
   };
 
-  const validateStep = () => {
-    if (currentStep === 1) {
-      if (!campaignName.trim() || !selectedLaboratory || !openDate || !closeDate || selectedPharmacies.length === 0) {
-        setFeedback('Complétez la dénomination, le laboratoire, les dates et au moins une pharmacie.');
-        return false;
-      }
-      if (closeDate < openDate) {
-        setFeedback('La date de clôture doit être postérieure ou égale à la date d’ouverture.');
-        return false;
-      }
-    }
-
-    if (currentStep === 2 && selectedProducts.length === 0) {
-      setFeedback('Sélectionnez au moins un produit pour définir le contenu de campagne.');
-      return false;
-    }
-
-    if (currentStep === 3) {
-      const enabledPhases = phases.filter((phase) => phase.enabled);
-      const hasInvalidWindow = enabledPhases.some((phase) => !phase.startDate || !phase.endDate || phase.endDate < phase.startDate);
-      const outOfCampaignRange = enabledPhases.some((phase) => phase.startDate < openDate || phase.endDate > closeDate);
-
-      if (hasInvalidWindow) {
-        setFeedback('Chaque phase active doit avoir une période valide (début et fin).');
-        return false;
-      }
-
-      if (outOfCampaignRange) {
-        setFeedback('Les périodes de phase doivent rester dans la fenêtre de la campagne.');
-        return false;
-      }
-    }
-
+  const openModal = () => {
     setFeedback(null);
-    return true;
-  };
-
-  const nextStep = () => {
-    if (!validateStep()) return;
-    setCurrentStep((step) => (step < 3 ? ((step + 1) as 1 | 2 | 3) : step));
-  };
-
-  const previousStep = () => {
-    setFeedback(null);
-    setCurrentStep((step) => (step > 1 ? ((step - 1) as 1 | 2 | 3) : step));
-  };
-
-  const launchCampaign = () => {
-    if (!validateStep()) return;
-
-    const phaseLabels = phases.filter((phase) => phase.enabled).map((phase) => `${phase.label} (${phase.startDate} → ${phase.endDate})`);
-
-    setLaunchedCampaigns((current) => [
-      { name: campaignName, laboratory: selectedLaboratoryLabel, openDate, closeDate, phases: phaseLabels },
-      ...current,
-    ]);
-
-    setFeedback('Campagne lancée. Les utilisateurs concernés la verront depuis leur session.');
-    setCurrentStep(1);
-    setCampaignName('');
-    setSelectedLaboratory('');
-    setOpenDate('');
-    setCloseDate('');
+    setForm(EMPTY_FORM);
     setSelectedPharmacies([]);
-    setCatalogMode('reuse');
-    setSelectedProducts([]);
-    setPhases(DEFAULT_PHASES);
+    setIsModalOpen(true);
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!form.name.trim() || !form.laboratoryId || !form.startDate || !form.endDate) return setFeedback('Tous les champs de campagne sont obligatoires.');
+    if (form.endDate < form.startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
+    if (!selectedPharmacies.length) return setFeedback('Sélectionnez au moins une pharmacie participante.');
+
+    setIsSaving(true);
+    try {
+      await createCampaign({
+        name: form.name.trim(),
+        supplier_id: form.laboratoryId,
+        start_date: form.startDate,
+        end_date: form.endDate,
+        pharmacy_ids: selectedPharmacies,
+      });
+      await loadData();
+      setIsModalOpen(false);
+      setFeedback('Campagne créée en brouillon.');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Création impossible.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const changeStatus = async (campaignId: string, status: CampaignStatus) => {
+    try {
+      await updateCampaignStatus(campaignId, status);
+      await loadData();
+      setFeedback('Statut de campagne mis à jour.');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Mise à jour du statut impossible.');
+    }
   };
 
   return (
     <div className="grid">
       <Card>
-        <h1>Campagnes d&apos;achat</h1>
-        <p>Configuration guidée en 3 étapes: création, contenu catalogue, phases et lancement.</p>
-      </Card>
-
-      <Card>
-        <h2>Mise en place de campagne — Étape {currentStep}/3</h2>
-
-        {currentStep === 1 && (
-          <div className="grid" style={{ gap: 12 }}>
-            <Input placeholder="Dénomination campagne" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
-            <Select value={selectedLaboratory} onChange={(event) => setSelectedLaboratory(event.target.value)}>
-              <option value="">Choisir le laboratoire concerné</option>
-              {LABORATORY_OPTIONS.map((lab) => (
-                <option key={lab.id} value={lab.id}>{lab.name}</option>
-              ))}
-            </Select>
-            <div className="grid grid-2">
-              <Input type="date" value={openDate} onChange={(event) => setOpenDate(event.target.value)} />
-              <Input type="date" value={closeDate} onChange={(event) => setCloseDate(event.target.value)} />
-            </div>
-            <div>
-              <p>Pharmacies concernées</p>
-              <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
-                {PHARMACY_OPTIONS.map((pharmacy) => (
-                  <label key={pharmacy} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedPharmacies.includes(pharmacy)}
-                      onChange={() => toggleSelection(pharmacy, selectedPharmacies, setSelectedPharmacies)}
-                    />
-                    {pharmacy}
-                  </label>
-                ))}
-              </div>
-            </div>
+        <div className="toolbar">
+          <div>
+            <h1>Campagnes d&apos;achat</h1>
+            <p>Créer et piloter les campagnes via une table et des actions par ligne.</p>
           </div>
-        )}
-
-        {currentStep === 2 && (
-          <div className="grid" style={{ gap: 12 }}>
-            <div>
-              <p>Contenu de campagne</p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                <input type="radio" checked={catalogMode === 'reuse'} onChange={() => setCatalogMode('reuse')} />
-                Reprendre le catalogue du laboratoire (BU/Brand/Produits)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                <input type="radio" checked={catalogMode === 'new'} onChange={() => setCatalogMode('new')} />
-                Construire un catalogue spécifique pour la campagne
-              </label>
-            </div>
-
-            <div>
-              <p>Produits concernés</p>
-              <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
-                {PRODUCT_OPTIONS.map((product) => (
-                  <label key={product} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedProducts.includes(product)}
-                      onChange={() => toggleSelection(product, selectedProducts, setSelectedProducts)}
-                    />
-                    {product}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {currentStep === 3 && (
-          <div className="grid" style={{ gap: 12 }}>
-            {phases.map((phase) => (
-              <div key={phase.key} className="card" style={{ padding: 12 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={phase.enabled}
-                    disabled={phase.required}
-                    onChange={(event) => updatePhase(phase.key, { enabled: event.target.checked })}
-                  />
-                  {phase.label} {phase.required ? '(obligatoire)' : '(optionnelle)'}
-                </label>
-                {phase.enabled && (
-                  <div className="grid grid-2" style={{ marginTop: 8 }}>
-                    <Input type="date" value={phase.startDate} onChange={(event) => updatePhase(phase.key, { startDate: event.target.value })} />
-                    <Input type="date" value={phase.endDate} onChange={(event) => updatePhase(phase.key, { endDate: event.target.value })} />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {feedback && <p style={{ marginTop: 12 }}>{feedback}</p>}
-
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <Button onClick={previousStep} disabled={currentStep === 1}>Précédent</Button>
-          {currentStep < 3 ? <Button onClick={nextStep}>Continuer</Button> : <Button onClick={launchCampaign}>Lancer la campagne</Button>}
+          <Button onClick={openModal}>Nouvelle campagne</Button>
         </div>
-      </Card>
+        <div className="toolbar" style={{ marginTop: 12 }}>
+          <Input placeholder="Rechercher une campagne" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+        </div>
+        {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
 
-      <Card>
-        <h2>Campagnes lancées (aperçu session utilisateurs)</h2>
-        {!launchedCampaigns.length && <p>Aucune campagne lancée pour le moment.</p>}
-        {!!launchedCampaigns.length && (
-          <div className="grid" style={{ gap: 8 }}>
-            {launchedCampaigns.map((campaign) => (
-              <div key={`${campaign.name}-${campaign.openDate}`} className="card" style={{ padding: 12 }}>
-                <strong>{campaign.name}</strong>
-                <p>{campaign.laboratory} — {campaign.openDate} au {campaign.closeDate}</p>
-                <ul>
-                  {campaign.phases.map((phase) => <li key={phase}>{phase}</li>)}
-                </ul>
-              </div>
-            ))}
+        {!isLoading && (
+          <div style={{ overflow: 'auto', marginTop: 12 }}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Campagne</TableHeaderCell>
+                  <TableHeaderCell>Laboratoire</TableHeaderCell>
+                  <TableHeaderCell>Ouverture</TableHeaderCell>
+                  <TableHeaderCell>Clôture</TableHeaderCell>
+                  <TableHeaderCell>Participants</TableHeaderCell>
+                  <TableHeaderCell>Statut</TableHeaderCell>
+                  <TableHeaderCell />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredCampaigns.map((campaign) => (
+                  <TableRow key={campaign.id}>
+                    <TableCell>{campaign.name}</TableCell>
+                    <TableCell>{campaign.supplier?.name ?? '-'}</TableCell>
+                    <TableCell>{campaign.start_date}</TableCell>
+                    <TableCell>{campaign.end_date}</TableCell>
+                    <TableCell>{campaign.campaign_participants?.[0]?.count ?? 0}</TableCell>
+                    <TableCell>{campaign.status}</TableCell>
+                    <TableCell>
+                      <ActionDropdown
+                        actions={[
+                          { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
+                          { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
+                          { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
+                        ]}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </Card>
+
+      {isModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}>
+          <Card>
+            <div className="toolbar">
+              <h2>Créer une campagne</h2>
+              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button>
+            </div>
+            <form className="grid" onSubmit={handleSubmit}>
+              <Input placeholder="Dénomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
+              <Select value={form.laboratoryId} onChange={(event) => setForm((current) => ({ ...current, laboratoryId: event.target.value }))} required>
+                <option value="">Sélectionner un laboratoire</option>
+                {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
+              </Select>
+              <div className="grid grid-2">
+                <Input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required />
+                <Input type="date" value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required />
+              </div>
+              <div>
+                <p>Pharmacies concernées</p>
+                <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
+                  {pharmacies.map((pharmacy) => (
+                    <label key={pharmacy.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={selectedPharmacies.includes(pharmacy.id)} onChange={() => togglePharmacy(pharmacy.id)} />
+                      {pharmacy.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <Button type="submit" disabled={isSaving}>{isSaving ? 'Création...' : 'Créer en brouillon'}</Button>
+            </form>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
