@@ -13,7 +13,7 @@ const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
 
 
 const CAMPAIGN_MIGRATIONS = [
-  'supabase/migrations/20260428090000_init.sql',
+  'supabase/migrations/20260501153000_add_campaigns_if_missing.sql',
 ];
 
 const isMissingCampaignSchema = (message: string | null) =>
