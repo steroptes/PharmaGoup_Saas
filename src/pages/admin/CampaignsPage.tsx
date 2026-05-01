@@ -14,6 +14,11 @@ const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
 
 const CAMPAIGN_MIGRATIONS = [
   'supabase/migrations/20260501153000_add_campaigns_if_missing.sql',
+  'supabase/migrations/20260501170000_add_campaign_phases.sql',
+  'supabase/migrations/20260501190000_add_campaign_product_arrangement.sql',
+  'supabase/migrations/20260501203000_campaign_independent_arrangement.sql',
+  'supabase/migrations/20260501213000_add_campaign_conditions_bonifications.sql',
+  'supabase/migrations/20260501223000_extend_campaign_conditions_model.sql',
 ];
 
 const isMissingCampaignSchema = (message: string | null) =>
