@@ -120,6 +120,11 @@ export const CampaignsPage = () => {
     }
   };
 
+
+  const goToSetup = (campaignId: string) => {
+    navigate(`/admin/campaigns/${campaignId}/setup`);
+  };
+
   const changeStatus = async (campaignId: string, status: CampaignStatus) => {
     try {
       await updateCampaignStatus(campaignId, status);
@@ -180,7 +185,7 @@ export const CampaignsPage = () => {
                     <TableCell>
                       <ActionDropdown
                         actions={[
-                          { label: 'Paramétrer', onClick: () => navigate(`/admin/campaigns/${campaign.id}/setup`) },
+                          { label: 'Paramétrer', onClick: () => goToSetup(campaign.id) },
                           { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
                           { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
                           { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
