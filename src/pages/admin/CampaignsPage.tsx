@@ -7,7 +7,6 @@ import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
 import { listLaboratories, Laboratory } from '@/services/laboratories';
-import { supabase } from '@/lib/supabase';
 import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
 const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
@@ -56,9 +55,8 @@ export const CampaignsPage = () => {
     if (laboratoriesResult.status === 'fulfilled') {
       setLaboratories(laboratoriesResult.value);
     } else {
-      const { data: supplierFallback } = await supabase.from('suppliers').select('id, name').order('name', { ascending: true });
-      setLaboratories((supplierFallback ?? []).map((item) => ({ id: item.id, designation: item.name, tax_identifier: null, address: null, mobile_phone: null, landline_phone: null, created_at: '' })));
-      setFeedback((current) => current ?? 'Chargement laboratoires principal indisponible: fallback fournisseurs activé.');
+      setLaboratories([]);
+      setFeedback((current) => current ?? (laboratoriesResult.reason instanceof Error ? laboratoriesResult.reason.message : 'Impossible de charger les laboratoires.'));
     }
 
     if (pharmaciesResult.status === 'fulfilled') {
