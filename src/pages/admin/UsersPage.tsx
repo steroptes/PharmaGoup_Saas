@@ -7,6 +7,8 @@ import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { supabase } from '@/lib/supabase';
 
+type ToastMessage = { id: string; message: string };
+
 type UserRow = {
   user_id: string;
   email: string | null;
@@ -47,6 +49,16 @@ export const UsersPage = () => {
   const [banFilter, setBanFilter] = useState<'all' | 'banned' | 'active'>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+
+  const showToast = (message: string) => {
+    const toast = { id: `${Date.now()}-${Math.random()}`, message };
+    setToasts((current) => [...current, toast]);
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((item) => item.id !== toast.id));
+    }, 3500);
+  };
 
   const loadUsers = async () => {
     setIsLoading(true);
@@ -138,6 +150,32 @@ export const UsersPage = () => {
     if (!deleteError) await loadUsers();
   };
 
+
+  const resendVerificationEmail = async (user: UserRow) => {
+    if (!user.email) return;
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: user.email,
+    });
+    if (resendError) {
+      setError(`Relance email échouée pour ${user.email}: ${resendError.message}`);
+      return;
+    }
+    showToast(`Email de vérification renvoyé à ${user.email}.`);
+  };
+
+  const sendResetPasswordEmail = async (user: UserRow) => {
+    if (!user.email) return;
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(user.email, {
+      redirectTo: `${window.location.origin}/auth/reset-password`,
+    });
+    if (resetError) {
+      setError(`Email de réinitialisation échoué pour ${user.email}: ${resetError.message}`);
+      return;
+    }
+    showToast(`Email de réinitialisation envoyé à ${user.email}.`);
+  };
+
   return (
     <div className="grid">
       <Card>
@@ -195,8 +233,7 @@ export const UsersPage = () => {
               <TableRow key={user.user_id}>
                 <TableCell>
                   <strong>{user.full_name ?? 'Profil manquant'}</strong>
-                  <br />
-                  <small>{user.user_id}</small>
+
                 </TableCell>
                 <TableCell>{user.role === 'admin' ? 'Admin' : user.role === 'pharmacy_user' ? 'Pharmacie' : 'Sans profil'}</TableCell>
                 <TableCell>{user.pharmacy_name ?? '—'}</TableCell>
@@ -209,9 +246,9 @@ export const UsersPage = () => {
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <div className="actions">
-                    <Button variant="secondary" disabled={!user.email}>Relancer email</Button>
-                    <Button variant="secondary" disabled={!user.email}>Réinit. mot de passe</Button>
+                  <div className="actions user-actions">
+                    <Button variant="secondary" disabled={!user.email} onClick={() => void resendVerificationEmail(user)}>Relancer email</Button>
+                    <Button variant="secondary" disabled={!user.email} onClick={() => void sendResetPasswordEmail(user)}>Réinit. mot de passe</Button>
                     <Button variant="danger" disabled={!user.role} onClick={() => void toggleBan(user)}>{user.is_banned ? 'Débannir' : 'Bannir'}</Button>
                     <Button variant="danger" disabled={!user.role} onClick={() => void deleteUser(user)}>Supprimer profil</Button>
                   </div>
@@ -221,6 +258,12 @@ export const UsersPage = () => {
           </TableBody>
         </Table>
       </Card>
+
+      <div className="toast-stack">
+        {toasts.map((toast) => (
+          <Card key={toast.id} className="toast-success">{toast.message}</Card>
+        ))}
+      </div>
     </div>
   );
 };
