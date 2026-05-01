@@ -5,7 +5,7 @@ export type CampaignStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type CampaignRow = {
   id: string;
   name: string;
-  supplier_id: string;
+  supplier_id: string | null;
   start_date: string;
   end_date: string;
   status: CampaignStatus;
@@ -14,19 +14,28 @@ export type CampaignRow = {
   participants_count: number;
 };
 
-
 const formatCampaignTableError = (message: string) => {
   const normalized = message.toLowerCase();
-  if (normalized.includes("could not find the table") && normalized.includes("campaign")) {
-    return "La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.";
+  if (normalized.includes('could not find the table') && normalized.includes('campaign')) {
+    return 'La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.';
   }
   return message;
+};
+
+const loadOrganizationMap = async () => {
+  const { data: supplierRows, error: supplierError } = await supabase.from('suppliers').select('id, name');
+  if (!supplierError && supplierRows?.length) return new Map(supplierRows.map((row) => [row.id, row.name]));
+
+  const { data: laboratoryRows, error: laboratoryError } = await supabase.from('laboratories').select('id, designation');
+  if (!laboratoryError && laboratoryRows?.length) return new Map(laboratoryRows.map((row) => [row.id, row.designation]));
+
+  return new Map<string, string>();
 };
 
 export const listCampaigns = async () => {
   const { data, error } = await supabase
     .from('campaigns')
-    .select('id, name, supplier_id, start_date, end_date, status, created_at, suppliers(name)')
+    .select('id, name, supplier_id, start_date, end_date, status, created_at')
     .order('created_at', { ascending: false });
 
   if (error) throw new Error(formatCampaignTableError(error.message));
@@ -34,13 +43,14 @@ export const listCampaigns = async () => {
   const campaigns = (data ?? []) as Array<{
     id: string;
     name: string;
-    supplier_id: string;
+    supplier_id: string | null;
     start_date: string;
     end_date: string;
     status: CampaignStatus;
     created_at: string;
-    suppliers: Array<{ name: string }> | null;
   }>;
+
+  const organizationMap = await loadOrganizationMap();
 
   const campaignIds = campaigns.map((campaign) => campaign.id);
   let participantsCountByCampaign = new Map<string, number>();
@@ -60,14 +70,8 @@ export const listCampaigns = async () => {
   }
 
   return campaigns.map((campaign) => ({
-    id: campaign.id,
-    name: campaign.name,
-    supplier_id: campaign.supplier_id,
-    start_date: campaign.start_date,
-    end_date: campaign.end_date,
-    status: campaign.status,
-    created_at: campaign.created_at,
-    supplier_name: campaign.suppliers?.[0]?.name ?? null,
+    ...campaign,
+    supplier_name: campaign.supplier_id ? organizationMap.get(campaign.supplier_id) ?? null : null,
     participants_count: participantsCountByCampaign.get(campaign.id) ?? 0,
   })) as CampaignRow[];
 };
