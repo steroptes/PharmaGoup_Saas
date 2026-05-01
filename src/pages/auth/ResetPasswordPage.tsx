@@ -1,21 +1,27 @@
 import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
 const hasRecoveryToken = () => {
-  const hash = window.location.hash;
-  return hash.includes('type=recovery') || hash.includes('access_token=');
+  const payload = `${window.location.search}${window.location.hash}`;
+  return payload.includes('type=recovery')
+    || payload.includes('access_token=')
+    || payload.includes('refresh_token=')
+    || payload.includes('token_hash=')
+    || payload.includes('code=');
 };
 
 export const ResetPasswordPage = () => {
   const { session } = useAuth();
+  const navigate = useNavigate();
   const canUpdatePassword = useMemo(() => Boolean(session?.user) || hasRecoveryToken(), [session]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   if (!canUpdatePassword) {
     return <Navigate to="/auth/forgot-password" replace />;
@@ -36,8 +42,21 @@ export const ResetPasswordPage = () => {
 
     setLoading(true);
     const { error } = await supabase.auth.updateUser({ password });
-    setStatus(error ? error.message : 'Mot de passe mis à jour. Vous pouvez vous connecter.');
+
+    if (error) {
+      setStatus(error.message);
+      setLoading(false);
+      return;
+    }
+
+    setIsSuccess(true);
+    setStatus('Mot de passe mis à jour avec succès. Déconnexion puis redirection vers la page de connexion...');
     setLoading(false);
+
+    await supabase.auth.signOut();
+    window.setTimeout(() => {
+      navigate('/auth/login', { replace: true });
+    }, 900);
   };
 
   return (
@@ -65,7 +84,7 @@ export const ResetPasswordPage = () => {
           />
         </label>
         {status && <p className="alert">{status}</p>}
-        <button className="btn" type="submit" disabled={loading}>
+        <button className="btn" type="submit" disabled={loading || isSuccess}>
           {loading ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
         </button>
         <Link to="/auth/login">Retour à la connexion</Link>
