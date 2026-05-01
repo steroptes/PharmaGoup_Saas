@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -21,9 +21,51 @@ export const ResetPasswordPage = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isPreparingSession, setIsPreparingSession] = useState(true);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  if (!canUpdatePassword) {
+  useEffect(() => {
+    let active = true;
+
+    const prepareRecoverySession = async () => {
+      const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+      const searchParams = new URLSearchParams(window.location.search);
+      const recoveryType = hashParams.get('type') ?? searchParams.get('type');
+      const tokenHash = hashParams.get('token_hash') ?? searchParams.get('token_hash');
+      const code = hashParams.get('code') ?? searchParams.get('code');
+
+      if (!recoveryType || recoveryType !== 'recovery') {
+        if (active) setIsPreparingSession(false);
+        return;
+      }
+
+      if (tokenHash) {
+        const { error } = await supabase.auth.verifyOtp({
+          type: 'recovery',
+          token_hash: tokenHash,
+        });
+
+        if (error && active) setStatus(error.message);
+      } else if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error && active) setStatus(error.message);
+      }
+
+      if (active) setIsPreparingSession(false);
+    };
+
+    void prepareRecoverySession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (isPreparingSession) {
+    return <div className="auth-layout">Préparation du lien de réinitialisation...</div>;
+  }
+
+  if (!session?.user && !canUpdatePassword) {
     return <Navigate to="/auth/forgot-password" replace />;
   }
 
