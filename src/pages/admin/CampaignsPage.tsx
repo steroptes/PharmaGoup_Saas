@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ActionDropdown } from '@/components/ui/dropdown-menu';
@@ -31,6 +32,7 @@ export const CampaignsPage = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const navigate = useNavigate();
 
   const loadData = async () => {
     setIsLoading(true);
@@ -110,6 +112,11 @@ export const CampaignsPage = () => {
     }
   };
 
+
+  const goToSetup = (campaignId: string) => {
+    navigate(`/admin/campaigns/${campaignId}/setup`);
+  };
+
   const changeStatus = async (campaignId: string, status: CampaignStatus) => {
     try {
       await updateCampaignStatus(campaignId, status);
@@ -170,6 +177,7 @@ export const CampaignsPage = () => {
                     <TableCell>
                       <ActionDropdown
                         actions={[
+                          { label: 'Paramétrer', onClick: () => goToSetup(campaign.id) },
                           { label: 'Ouvrir', onClick: () => void changeStatus(campaign.id, 'open') },
                           { label: 'Clôturer', onClick: () => void changeStatus(campaign.id, 'closed') },
                           { label: 'Archiver', onClick: () => void changeStatus(campaign.id, 'archived') },
