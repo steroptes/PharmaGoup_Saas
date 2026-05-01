@@ -11,6 +11,15 @@ import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
 const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
 
+
+const CAMPAIGN_MIGRATIONS = [
+  'supabase/migrations/20260428090000_init.sql',
+];
+
+const isMissingCampaignSchema = (message: string | null) =>
+  !!message && message.toLowerCase().includes('table supabase des campagnes est absente');
+
+
 export const CampaignsPage = () => {
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
@@ -125,6 +134,15 @@ export const CampaignsPage = () => {
           <Input placeholder="Rechercher une campagne" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
         </div>
         {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
+        {isMissingCampaignSchema(feedback) && (
+          <div style={{ marginTop: 8, padding: 12, border: '1px solid #fecaca', background: '#fff1f2', borderRadius: 10 }}>
+            <p style={{ margin: 0, fontWeight: 600 }}>Migrations à appliquer</p>
+            <ul style={{ marginTop: 8, marginBottom: 8 }}>
+              {CAMPAIGN_MIGRATIONS.map((file) => <li key={file}><code>{file}</code></li>)}
+            </ul>
+            <p style={{ margin: 0 }}><code>supabase db push</code> puis recharger la page.</p>
+          </div>
+        )}
 
         {!isLoading && (
           <div style={{ overflow: 'auto', marginTop: 12 }}>
