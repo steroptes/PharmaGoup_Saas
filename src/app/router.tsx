@@ -20,9 +20,16 @@ import { PharmacySignupPage } from '@/pages/auth/PharmacySignupPage';
 import { AdminSignupPage } from '@/pages/auth/AdminSignupPage';
 
 const FullPageLoader = () => <div className="auth-layout">Chargement de la session...</div>;
-const isPasswordRecoveryFlow = (pathname: string, hash: string) =>
-  pathname === '/auth/reset-password'
-  && (hash.includes('type=recovery') || hash.includes('access_token='));
+const isPasswordRecoveryFlow = (pathname: string, search: string, hash: string) => {
+  if (pathname !== '/auth/reset-password') return false;
+
+  const payload = `${search}${hash}`;
+  return payload.includes('type=recovery')
+    || payload.includes('access_token=')
+    || payload.includes('refresh_token=')
+    || payload.includes('token_hash=')
+    || payload.includes('code=');
+};
 
 
 const RequireAuth = () => {
@@ -51,7 +58,7 @@ const GuestOnly = () => {
 
   if (isLoading) return <FullPageLoader />;
 
-  if (isPasswordRecoveryFlow(location.pathname, location.hash)) {
+  if (isPasswordRecoveryFlow(location.pathname, location.search, location.hash)) {
     return <Outlet />;
   }
 
