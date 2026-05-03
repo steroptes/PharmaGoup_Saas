@@ -46,6 +46,15 @@ export const bulkDeleteProducts = async (payload: BulkDeleteProductsInput) => {
   return data as { deleted_count: number };
 };
 
+export const bulkDetachProductsFromCatalog = async (payload: BulkDeleteProductsInput) => {
+  const { data, error } = await supabase.rpc('catalog_products_bulk_detach', {
+    p_laboratory_id: payload.laboratoryId,
+    p_product_ids: payload.productIds,
+  });
+  if (error) throw error;
+  return data as { detached_count: number };
+};
+
 export const bulkMoveGroupBrands = async (payload: BulkMoveGroupBrandsInput) => {
   const { data, error } = await supabase.rpc('catalog_group_brands_bulk_move', {
     p_laboratory_id: payload.laboratoryId,

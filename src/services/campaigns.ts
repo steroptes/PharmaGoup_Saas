@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+﻿import { supabase } from '@/lib/supabase';
 
 export type CampaignStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type CampaignPhaseKey = 'purchase_intentions' | 'purchase_orders' | 'delivery_notes';
@@ -70,7 +70,7 @@ export type CampaignRow = {
 const formatCampaignTableError = (message: string) => {
   const normalized = message.toLowerCase();
   if (normalized.includes('could not find the table') && normalized.includes('campaign')) {
-    return 'La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.';
+    return 'La table Supabase des campagnes est absente (migrations non appliquÃ©es). ExÃ©cutez les migrations puis rechargez la page.';
   }
   return message;
 };

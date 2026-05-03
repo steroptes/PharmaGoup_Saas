@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+﻿import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -112,8 +112,8 @@ export const CampaignsPage = () => {
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form.name.trim() || !form.laboratoryId || !form.startDate || !form.endDate) return setFeedback('Tous les champs de campagne sont obligatoires.');
-    if (form.endDate < form.startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
-    if (!selectedPharmacies.length) return setFeedback('Sélectionnez au moins une pharmacie participante.');
+    if (form.endDate < form.startDate) return setFeedback('La date de clÃ´ture doit Ãªtre supÃ©rieure ou Ã©gale Ã  la date dâ€™ouverture.');
+    if (!selectedPharmacies.length) return setFeedback('SÃ©lectionnez au moins une pharmacie participante.');
 
     setIsSaving(true);
     try {
@@ -126,9 +126,9 @@ export const CampaignsPage = () => {
       });
       await loadData();
       setIsModalOpen(false);
-      setFeedback('Campagne créée en brouillon.');
+      setFeedback('Campagne crÃ©Ã©e en brouillon.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Création impossible.');
+      setFeedback(error instanceof Error ? error.message : 'CrÃ©ation impossible.');
     } finally {
       setIsSaving(false);
     }
@@ -140,9 +140,9 @@ export const CampaignsPage = () => {
   };
 
   const campaignActions = (campaignId: string): DropdownAction[] => ([
-    { label: 'Paramétrer', onClick: () => goToSetup(campaignId) },
+    { label: 'ParamÃ©trer', onClick: () => goToSetup(campaignId) },
     { label: 'Ouvrir', onClick: () => void changeStatus(campaignId, 'open') },
-    { label: 'Clôturer', onClick: () => void changeStatus(campaignId, 'closed') },
+    { label: 'ClÃ´turer', onClick: () => void changeStatus(campaignId, 'closed') },
     { label: 'Archiver', onClick: () => void changeStatus(campaignId, 'archived') },
   ]);
 
@@ -150,9 +150,9 @@ export const CampaignsPage = () => {
     try {
       await updateCampaignStatus(campaignId, status);
       await loadData();
-      setFeedback('Statut de campagne mis à jour.');
+      setFeedback('Statut de campagne mis Ã  jour.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Mise à jour du statut impossible.');
+      setFeedback(error instanceof Error ? error.message : 'Mise Ã  jour du statut impossible.');
     }
   };
 
@@ -162,7 +162,7 @@ export const CampaignsPage = () => {
         <div className="toolbar">
           <div>
             <h1>Campagnes d&apos;achat</h1>
-            <p>Créer et piloter les campagnes via une table et des actions par ligne.</p>
+            <p>CrÃ©er et piloter les campagnes via une table et des actions par ligne.</p>
           </div>
           <Button onClick={openModal}>Nouvelle campagne</Button>
         </div>
@@ -172,7 +172,7 @@ export const CampaignsPage = () => {
         {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
         {isMissingCampaignSchema(feedback) && (
           <div style={{ marginTop: 8, padding: 12, border: '1px solid #fecaca', background: '#fff1f2', borderRadius: 10 }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>Migrations à appliquer</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>Migrations Ã  appliquer</p>
             <ul style={{ marginTop: 8, marginBottom: 8 }}>
               {CAMPAIGN_MIGRATIONS.map((file) => <li key={file}><code>{file}</code></li>)}
             </ul>
@@ -188,7 +188,7 @@ export const CampaignsPage = () => {
                   <TableHeaderCell>Campagne</TableHeaderCell>
                   <TableHeaderCell>Laboratoire</TableHeaderCell>
                   <TableHeaderCell>Ouverture</TableHeaderCell>
-                  <TableHeaderCell>Clôture</TableHeaderCell>
+                  <TableHeaderCell>ClÃ´ture</TableHeaderCell>
                   <TableHeaderCell>Participants</TableHeaderCell>
                   <TableHeaderCell>Statut</TableHeaderCell>
                   <TableHeaderCell />
@@ -215,9 +215,9 @@ export const CampaignsPage = () => {
 
         {!isLoading && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-            <p style={{ margin: 0 }}>Page {page} / {totalPages} — {filteredCampaigns.length} campagne(s)</p>
+            <p style={{ margin: 0 }}>Page {page} / {totalPages} â€” {filteredCampaigns.length} campagne(s)</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="secondary" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Précédent</Button>
+              <Button variant="secondary" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>PrÃ©cÃ©dent</Button>
               <Button variant="secondary" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}>Suivant</Button>
             </div>
           </div>
@@ -228,13 +228,13 @@ export const CampaignsPage = () => {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}>
           <Card>
             <div className="toolbar">
-              <h2>Créer une campagne</h2>
+              <h2>CrÃ©er une campagne</h2>
               <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button>
             </div>
             <form className="grid" onSubmit={handleSubmit}>
-              <Input placeholder="Dénomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
+              <Input placeholder="DÃ©nomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
               <Select value={form.laboratoryId} onChange={(event) => setForm((current) => ({ ...current, laboratoryId: event.target.value }))} required>
-                <option value="">Sélectionner un laboratoire</option>
+                <option value="">SÃ©lectionner un laboratoire</option>
                 {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
               </Select>
               <div className="grid grid-2">
@@ -242,7 +242,7 @@ export const CampaignsPage = () => {
                 <Input type="date" value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required />
               </div>
               <div>
-                <p>Pharmacies concernées</p>
+                <p>Pharmacies concernÃ©es</p>
                 <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
                   {!pharmacies.length && <p style={{ gridColumn: '1 / -1' }}>Aucune pharmacie active disponible.</p>}
                   {pharmacies.map((pharmacy) => (
@@ -253,7 +253,7 @@ export const CampaignsPage = () => {
                   ))}
                 </div>
               </div>
-              <Button type="submit" disabled={isSaving}>{isSaving ? 'Création...' : 'Créer en brouillon'}</Button>
+              <Button type="submit" disabled={isSaving}>{isSaving ? 'CrÃ©ation...' : 'CrÃ©er en brouillon'}</Button>
             </form>
           </Card>
         </div>

@@ -51,6 +51,13 @@ type ProductArrangementDraft = { campaign_business_unit_id: string | null; campa
 type ProductsView = 'select' | 'arrange';
 type AssignTarget = { buId: string | null; groupId: string | null; label: string };
 type ConditionKindOption = { value: string; label: string; unit: string; operator: string; requiresReferenceScope: boolean; allowedReferenceScopes: CampaignScopeType[] };
+type ConditionTarget = {
+  scope_type: CampaignScopeType;
+  campaign_business_unit_id: string | null;
+  campaign_group_brand_id: string | null;
+  product_id: string | null;
+  label: string;
+};
 
 const STEP_ORDER: StepKey[] = ['details', 'audience', 'products', 'conditions', 'bonifications', 'validation'];
 const PHASE_DEFINITIONS: Array<{ key: CampaignPhaseKey; label: string; required: boolean }> = [
@@ -137,6 +144,8 @@ export const CampaignSetupPage = () => {
   const [isSavingConditions, setIsSavingConditions] = useState(false);
   const [isSavingBonifications, setIsSavingBonifications] = useState(false);
   const [conditionsPhase, setConditionsPhase] = useState<CampaignConditionPhase>('both');
+  const [conditionTarget, setConditionTarget] = useState<ConditionTarget | null>(null);
+  const [conditionModalError, setConditionModalError] = useState<string | null>(null);
   const [conditionDraft, setConditionDraft] = useState<CampaignCondition>({
     scope_type: 'campaign',
     campaign_business_unit_id: null,
@@ -453,6 +462,19 @@ export const CampaignSetupPage = () => {
   const getCampaignDraftForProduct = (productId: string): ProductArrangementDraft =>
     productArrangements[productId] ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
 
+  const arrangedProducts = useMemo(
+    () => selectedProductIds
+      .map((id) => managedProducts.find((product) => product.id === id))
+      .filter((product): product is CampaignManagedProduct => Boolean(product)),
+    [selectedProductIds, managedProducts],
+  );
+
+  const countProductsInGroup = (groupId: string) =>
+    arrangedProducts.filter((product) => getCampaignDraftForProduct(product.id).campaign_group_brand_id === groupId).length;
+
+  const countProductsInBu = (buId: string) =>
+    arrangedProducts.filter((product) => getCampaignDraftForProduct(product.id).campaign_business_unit_id === buId).length;
+
   const assignableProducts = useMemo(() => {
     const query = assignSearch.trim().toLowerCase();
     return selectedProductIds
@@ -564,6 +586,18 @@ export const CampaignSetupPage = () => {
     if (!selectedProductIds.length) {
       setFeedback('Sélectionnez au moins un produit pour la campagne.');
       return;
+    }
+    if (arrangementMode === 'custom') {
+      const emptyBus = businessUnits.find((bu) => countProductsInBu(bu.id) === 0);
+      if (emptyBus) {
+        setFeedback(`La BU "${emptyBus.name}" est vide. Affectez au moins un produit ou supprimez-la.`);
+        return;
+      }
+      const emptyGroup = groupBrands.find((group) => countProductsInGroup(group.id) === 0);
+      if (emptyGroup) {
+        setFeedback(`Le GROUP "${emptyGroup.name}" est vide. Affectez au moins un produit ou supprimez-le.`);
+        return;
+      }
     }
 
     setIsSavingProducts(true);
@@ -693,23 +727,36 @@ export const CampaignSetupPage = () => {
   const currentConditionOptions = CONDITION_KIND_OPTIONS_BY_SCOPE[conditionDraft.scope_type];
   const currentConditionOption = currentConditionOptions.find((option) => option.value === conditionDraft.condition_kind) ?? currentConditionOptions[0];
   const isPercentConditionDraft = conditionDraft.unit === '%';
-  const handleConditionScopeChange = (nextScope: CampaignScopeType) => {
-    const firstOption = CONDITION_KIND_OPTIONS_BY_SCOPE[nextScope][0];
-    setConditionDraft((current) => ({
-      ...current,
-      scope_type: nextScope,
-      campaign_business_unit_id: null,
-      campaign_group_brand_id: null,
-      product_id: null,
-      condition_kind: firstOption.value,
-      operator: firstOption.operator,
-      unit: firstOption.unit,
-      reference_scope_type: firstOption.requiresReferenceScope ? (firstOption.allowedReferenceScopes[0] ?? null) : null,
-    }));
+  const openConditionModal = (target: ConditionTarget) => {
+    if (!hasProductsForConditionTarget(target)) {
+      setFeedback('Impossible d\'ajouter une condition sur un item sans produit.');
+      return;
+    }
+    setConditionModalError(null);
+    const defaultOption = CONDITION_KIND_OPTIONS_BY_SCOPE[target.scope_type][0];
+    setConditionTarget(target);
+    setConditionDraft({
+      scope_type: target.scope_type,
+      campaign_business_unit_id: target.campaign_business_unit_id,
+      campaign_group_brand_id: target.campaign_group_brand_id,
+      product_id: target.product_id,
+      phase: conditionsPhase,
+      condition_kind: defaultOption.value,
+      reference_scope_type: defaultOption.requiresReferenceScope ? (defaultOption.allowedReferenceScopes[0] ?? null) : null,
+      label: '',
+      operator: defaultOption.operator,
+      target_value: 0,
+      unit: defaultOption.unit,
+    });
+  };
+
+  const closeConditionModal = () => {
+    setConditionTarget(null);
+    setConditionModalError(null);
   };
 
   const handleConditionKindChange = (nextKind: string) => {
-    const nextOption = currentConditionOptions.find((option) => option.value === nextKind);
+    const nextOption = CONDITION_KIND_OPTIONS_BY_SCOPE[conditionDraft.scope_type].find((option) => option.value === nextKind);
     if (!nextOption) return;
     setConditionDraft((current) => ({
       ...current,
@@ -738,36 +785,23 @@ export const CampaignSetupPage = () => {
     return `${scopeLabel}: ${kindLabel} ${row.operator} ${row.target_value}${row.unit ? ` ${row.unit}` : ''}${refLabel}`;
   };
 
-  const conditionGroups = [
-    { key: 'campaign' as CampaignScopeType, label: 'Campagne' },
-    { key: 'business_unit' as CampaignScopeType, label: 'BU' },
-    { key: 'group_brand' as CampaignScopeType, label: 'GROUP' },
-    { key: 'product' as CampaignScopeType, label: 'Produit' },
-  ].map((group) => ({
-    ...group,
-    items: conditions
+  const getConditionsForTarget = (target: Omit<ConditionTarget, 'label'>) => (
+    conditions
       .map((condition, index) => ({ condition, index }))
-      .filter((entry) => entry.condition.scope_type === group.key),
-  })).filter((group) => group.items.length > 0);
+      .filter(({ condition }) => (
+        condition.scope_type === target.scope_type
+        && (condition.campaign_business_unit_id ?? null) === target.campaign_business_unit_id
+        && (condition.campaign_group_brand_id ?? null) === target.campaign_group_brand_id
+        && (condition.product_id ?? null) === target.product_id
+      ))
+  );
 
-  const getConditionItemLabel = (row: CampaignCondition) => {
-    if (row.scope_type === 'campaign') return 'Campagne';
-    if (row.scope_type === 'business_unit') {
-      const buName = row.campaign_business_unit_id
-        ? (businessUnits.find((bu) => bu.id === row.campaign_business_unit_id)?.name ?? 'BU')
-        : 'BU non définie';
-      return `BU: ${buName}`;
-    }
-    if (row.scope_type === 'group_brand') {
-      const groupName = row.campaign_group_brand_id
-        ? (groupBrands.find((group) => group.id === row.campaign_group_brand_id)?.name ?? 'GROUP')
-        : 'GROUP non défini';
-      return `GROUP: ${groupName}`;
-    }
-    const productName = row.product_id
-      ? (managedProducts.find((product) => product.id === row.product_id)?.designation ?? 'Produit')
-      : 'Produit non défini';
-    return `Produit: ${productName}`;
+  const hasProductsForConditionTarget = (target: Omit<ConditionTarget, 'label'>) => {
+    if (target.scope_type === 'campaign') return arrangedProducts.length > 0;
+    if (target.scope_type === 'business_unit' && target.campaign_business_unit_id) return countProductsInBu(target.campaign_business_unit_id) > 0;
+    if (target.scope_type === 'group_brand' && target.campaign_group_brand_id) return countProductsInGroup(target.campaign_group_brand_id) > 0;
+    if (target.scope_type === 'product' && target.product_id) return arrangedProducts.some((product) => product.id === target.product_id);
+    return false;
   };
 
   const getCampaignMaxAmount = () => (
@@ -827,6 +861,80 @@ export const CampaignSetupPage = () => {
       const highestChildMax = Math.max(highestBuMax, highestGroupMax);
       if (highestChildMax > draft.target_value) {
         return 'Le montant maximal campagne doit être supérieur ou égal aux montants maximaux BU/GROUP déjà définis.';
+      }
+    }
+
+    return null;
+  };
+
+  const getConditionTargetKey = (row: Pick<CampaignCondition, 'scope_type' | 'campaign_business_unit_id' | 'campaign_group_brand_id' | 'product_id'>) =>
+    `${row.scope_type}|${row.campaign_business_unit_id ?? 'null'}|${row.campaign_group_brand_id ?? 'null'}|${row.product_id ?? 'null'}`;
+
+  const hasDuplicateConditionKindForTarget = (draft: CampaignCondition) =>
+    conditions.some((row) => row.condition_kind === draft.condition_kind && getConditionTargetKey(row) === getConditionTargetKey(draft));
+
+  const findMaxAmountValue = (scope: CampaignScopeType, buId: string | null, groupId: string | null, productId: string | null) => {
+    const kind = scope === 'campaign'
+      ? 'campaign_max_amount'
+      : scope === 'business_unit'
+        ? 'business_unit_max_amount'
+        : scope === 'group_brand'
+          ? 'group_max_amount'
+          : 'product_max_amount';
+    return conditions.find((row) => (
+      row.condition_kind === kind
+      && row.scope_type === scope
+      && (row.campaign_business_unit_id ?? null) === buId
+      && (row.campaign_group_brand_id ?? null) === groupId
+      && (row.product_id ?? null) === productId
+    ))?.target_value ?? null;
+  };
+
+  const validateHierarchyConsistency = (draft: CampaignCondition): string | null => {
+    if (!draft.condition_kind.endsWith('_max_amount')) return null;
+
+    const campaignMax = findMaxAmountValue('campaign', null, null, null);
+    const buMax = draft.campaign_business_unit_id ? findMaxAmountValue('business_unit', draft.campaign_business_unit_id, null, null) : null;
+    const groupMax = draft.campaign_group_brand_id ? findMaxAmountValue('group_brand', draft.campaign_business_unit_id, draft.campaign_group_brand_id, null) : null;
+
+    if (draft.scope_type === 'business_unit') {
+      if (campaignMax !== null && draft.target_value > campaignMax) {
+        return 'Le montant maximal BU ne peut pas dépasser le montant maximal Campagne.';
+      }
+      const highestGroupInsideBu = Math.max(
+        0,
+        ...conditions.filter((row) => row.scope_type === 'group_brand' && row.campaign_business_unit_id === draft.campaign_business_unit_id && row.condition_kind === 'group_max_amount').map((row) => row.target_value),
+      );
+      if (highestGroupInsideBu > draft.target_value) {
+        return 'Le montant maximal BU doit être supérieur ou égal aux montants maximaux GROUP déjà définis.';
+      }
+    }
+
+    if (draft.scope_type === 'group_brand') {
+      if (buMax !== null && draft.target_value > buMax) return 'Le montant maximal GROUP ne peut pas dépasser le montant maximal BU.';
+      if (campaignMax !== null && draft.target_value > campaignMax) return 'Le montant maximal GROUP ne peut pas dépasser le montant maximal Campagne.';
+      const highestProductInsideGroup = Math.max(
+        0,
+        ...conditions.filter((row) => row.scope_type === 'product' && row.campaign_group_brand_id === draft.campaign_group_brand_id && row.condition_kind === 'product_max_amount').map((row) => row.target_value),
+      );
+      if (highestProductInsideGroup > draft.target_value) {
+        return 'Le montant maximal GROUP doit être supérieur ou égal aux montants maximaux Produit déjà définis.';
+      }
+    }
+
+    if (draft.scope_type === 'product') {
+      if (groupMax !== null && draft.target_value > groupMax) return 'Le montant maximal Produit ne peut pas dépasser le montant maximal GROUP.';
+      if (buMax !== null && draft.target_value > buMax) return 'Le montant maximal Produit ne peut pas dépasser le montant maximal BU.';
+      if (campaignMax !== null && draft.target_value > campaignMax) return 'Le montant maximal Produit ne peut pas dépasser le montant maximal Campagne.';
+    }
+
+    if (draft.scope_type === 'campaign') {
+      const highestChildMax = Math.max(
+        0,
+        ...conditions.filter((row) => row.condition_kind === 'business_unit_max_amount' || row.condition_kind === 'group_max_amount' || row.condition_kind === 'product_max_amount').map((row) => row.target_value),
+      );
+      if (highestChildMax > draft.target_value) {
+        return 'Le montant maximal Campagne doit être supérieur ou égal aux montants maximaux définis sur BU/GROUP/Produit.';
       }
     }
 
@@ -1344,14 +1452,10 @@ export const CampaignSetupPage = () => {
               <div style={{ display: 'grid', gap: 6 }}>
                 <h2 style={{ margin: 0 }}>Conditions</h2>
                 <p style={{ margin: 0, color: '#71717a', fontSize: 14 }}>
-                  Ajoutez les conditions ligne par ligne, puis validez l&apos;ensemble.
+                  Ajoutez une condition depuis chaque item (BU, GROUP, Produit), puis validez l&apos;ensemble.
                 </p>
               </div>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
-                <div className="toolbar" style={{ marginBottom: 12 }}>
-                  <p style={{ margin: 0, fontWeight: 600 }}>Nouvelle condition</p>
-                  <p style={{ margin: 0, color: '#71717a', fontSize: 13 }}>Saisie ligne par ligne</p>
-                </div>
+              <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
                 <div style={{ marginBottom: 10 }}>
                   <label>Phase appliquée à toutes les conditions</label>
                   <Select value={conditionsPhase} onChange={(e) => setConditionsPhase(e.target.value as CampaignConditionPhase)}>
@@ -1360,94 +1464,158 @@ export const CampaignSetupPage = () => {
                     <option value="purchase_orders">BC</option>
                   </Select>
                 </div>
-                <div style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: 10, background: '#fafafa' }}>
-                  <div className="grid" style={{ gap: 10 }}>
-                    <div className="grid grid-2" style={{ gap: 10 }}>
-                      <div><label>Cible</label><Select value={conditionDraft.scope_type} onChange={(e) => handleConditionScopeChange(e.target.value as CampaignScopeType)}><option value="campaign">Campagne</option><option value="business_unit">BU</option><option value="group_brand">GROUP</option><option value="product">Produit</option></Select></div>
-                      <div><label>Nature de condition</label><Select value={conditionDraft.condition_kind} onChange={(e) => handleConditionKindChange(e.target.value)}>{currentConditionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></div>
-                    </div>
-                    {conditionDraft.scope_type === 'business_unit' || conditionDraft.scope_type === 'group_brand' || conditionDraft.scope_type === 'product' ? (
-                      <div><label>BU</label><Select value={conditionDraft.campaign_business_unit_id ?? ''} onChange={(e) => setConditionDraft((c) => ({ ...c, campaign_business_unit_id: e.target.value || null, campaign_group_brand_id: null, product_id: null }))}><option value="">Sélectionner</option>{businessUnits.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>)}</Select></div>
-                    ) : null}
-                    {conditionDraft.scope_type === 'group_brand' || conditionDraft.scope_type === 'product' ? (
-                      <div><label>GROUP</label><Select value={conditionDraft.campaign_group_brand_id ?? ''} onChange={(e) => setConditionDraft((c) => ({ ...c, campaign_group_brand_id: e.target.value || null, product_id: null }))}><option value="">Sélectionner</option>{groupBrands.filter((g) => g.campaign_business_unit_id === (conditionDraft.campaign_business_unit_id ?? null)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</Select></div>
-                    ) : null}
-                    {conditionDraft.scope_type === 'product' ? (
-                      <div><label>Produit</label><Select value={conditionDraft.product_id ?? ''} onChange={(e) => setConditionDraft((c) => ({ ...c, product_id: e.target.value || null }))}><option value="">Sélectionner</option>{selectedProductIds.map((id) => managedProducts.find((p) => p.id === id)).filter((p): p is CampaignManagedProduct => Boolean(p)).map((p) => <option key={p.id} value={p.id}>{p.designation}</option>)}</Select></div>
-                    ) : null}
-                    {currentConditionOption.requiresReferenceScope ? (
-                      <div>
-                        <label>Référence du total (%)</label>
-                        <Select value={conditionDraft.reference_scope_type ?? ''} onChange={(e) => setConditionDraft((c) => ({ ...c, reference_scope_type: (e.target.value as CampaignScopeType) || null }))}>
-                          {currentConditionOption.allowedReferenceScopes.map((scope) => (
-                            <option key={scope} value={scope}>{scope === 'campaign' ? 'Campagne' : scope === 'business_unit' ? 'BU' : 'GROUP'}</option>
-                          ))}
-                        </Select>
-                      </div>
-                    ) : null}
-                    <div className="grid grid-2" style={{ gap: 10 }}>
-                      <div><label>Opérateur</label><Input value={conditionDraft.operator} disabled /></div>
-                      <div><label>Valeur cible</label><Input type="number" min={0} max={isPercentConditionDraft ? 100 : undefined} step="0.001" value={conditionDraft.target_value} onChange={(e) => setConditionDraft((c) => ({ ...c, target_value: Number(e.target.value || 0) }))} /></div>
-                    </div>
-                    <div>
-                      <Button variant="secondary" onClick={() => {
-                        if (conditionDraft.scope_type === 'business_unit' && !conditionDraft.campaign_business_unit_id) return setFeedback('Sélectionnez une BU cible.');
-                        if (conditionDraft.scope_type === 'group_brand' && !conditionDraft.campaign_group_brand_id) return setFeedback('Sélectionnez un GROUP cible.');
-                        if (conditionDraft.scope_type === 'product' && !conditionDraft.product_id) return setFeedback('Sélectionnez un produit cible.');
-                        if (conditionDraft.target_value <= 0) return setFeedback('La valeur cible doit être supérieure à 0.');
-                        if (conditionDraft.unit === '%' && conditionDraft.target_value > 100) return setFeedback('Une valeur en pourcentage ne peut pas dépasser 100%.');
-                        const maxAmountError = validateMaxAmountConsistency(conditionDraft);
-                        if (maxAmountError) return setFeedback(maxAmountError);
-                        const row: CampaignCondition = { ...conditionDraft, phase: conditionsPhase, label: '' };
-                        row.label = generateConditionLabel(row);
-                        setConditions((current) => [...current, row]);
-                        const nextDefault = CONDITION_KIND_OPTIONS_BY_SCOPE.campaign[0];
-                        setConditionDraft({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, phase: conditionsPhase, condition_kind: nextDefault.value, reference_scope_type: null, label: '', operator: nextDefault.operator, target_value: 0, unit: nextDefault.unit });
-                      }}>Appliquer la condition</Button>
-                    </div>
-                  </div>
+                <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Règles d&apos;intégrité</p>
+                  <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. Un item sans produit ne peut pas recevoir de condition.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. Une même nature de condition ne peut exister qu&apos;une fois par item.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>3. Les montants maximaux doivent rester cohérents dans la hiérarchie: Campagne ≥ BU ≥ GROUP ≥ Produit.</p>
                 </div>
-              </div>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
-                <div className="toolbar" style={{ marginBottom: 8 }}>
-                  <p style={{ margin: 0, fontWeight: 600 }}>Conditions saisies</p>
-                  <p style={{ margin: 0, color: '#71717a', fontSize: 13 }}>{conditions.length} condition(s)</p>
-                </div>
-                <p style={{ marginTop: 0, marginBottom: 10, color: '#667085', fontSize: 13 }}>
-                  Le libellé est généré automatiquement selon la cible, la nature, l&apos;opérateur et la valeur.
-                </p>
                 <div className="grid" style={{ gap: 10 }}>
-                  {conditionGroups.map((group) => (
-                    <details key={group.key} open style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: 10, background: '#fafafa' }}>
-                      <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#374151' }}>
-                        {group.label} ({group.items.length})
-                      </summary>
-                      <div className="grid" style={{ gap: 8 }}>
-                        {Object.entries(
-                          group.items.reduce<Record<string, Array<{ condition: CampaignCondition; index: number }>>>((acc, entry) => {
-                            const key = getConditionItemLabel(entry.condition);
-                            if (!acc[key]) acc[key] = [];
-                            acc[key].push(entry);
-                            return acc;
-                          }, {}),
-                        ).map(([itemLabel, entries]) => (
-                          <details key={`${group.key}-${itemLabel}`} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10, background: '#fff', marginTop: 8 }}>
-                            <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#52525b' }}>
-                              {itemLabel} ({entries.length})
-                            </summary>
-                            <div className="grid" style={{ gap: 8 }}>
-                              {entries.map(({ condition, index }) => (
-                                <div key={`${condition.label}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: '8px 10px', background: '#fff', marginTop: 8 }}>
-                                  <p style={{ margin: 0, fontSize: 14 }}>{index + 1}. {condition.label}</p>
-                                  <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Retirer</Button>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        ))}
+                      <details open style={{ border: '1px solid #bbf7d0', borderRadius: 12, padding: 10, background: '#ffffff' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Racine campagne</summary>
+                    <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                      <div className="toolbar">
+                        <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
+                          {getConditionsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).length} condition(s)
+                        </p>
+                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length} onClick={() => openConditionModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>
+                          Ajouter condition
+                        </Button>
                       </div>
-                    </details>
-                  ))}
+                      {getConditionsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).map(({ condition, index }) => (
+                        <div key={`campaign-condition-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                          <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                          <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                        </div>
+                      ))}
+
+                      {selectedProductIds
+                        .map((id) => managedProducts.find((product) => product.id === id))
+                        .filter((product): product is CampaignManagedProduct => Boolean(product))
+                        .filter((product) => {
+                          const draft = getCampaignDraftForProduct(product.id);
+                          return !draft.campaign_business_unit_id && !draft.campaign_group_brand_id;
+                        })
+                        .map((product) => {
+                          const productConditions = getConditionsForTarget({ scope_type: 'product', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: product.id });
+                          return (
+                            <details key={`root-product-${product.id}`} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                              <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>Produit: {product.designation}</summary>
+                              <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                <div className="toolbar">
+                                  <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                </div>
+                                {productConditions.map(({ condition, index }) => (
+                                  <div key={`root-product-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                    <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                                    <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          );
+                        })}
+                    </div>
+                  </details>
+
+                  {businessUnits.map((bu) => {
+                    const buConditions = getConditionsForTarget({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null });
+                    const buProducts = selectedProductIds
+                      .map((id) => managedProducts.find((product) => product.id === id))
+                      .filter((product): product is CampaignManagedProduct => Boolean(product))
+                      .filter((product) => {
+                        const draft = getCampaignDraftForProduct(product.id);
+                        return draft.campaign_business_unit_id === bu.id && !draft.campaign_group_brand_id;
+                      });
+                    const buGroups = groupBrands.filter((group) => group.campaign_business_unit_id === bu.id);
+
+                    return (
+                      <details key={bu.id} open style={{ border: '1px solid #bbf7d0', borderRadius: 12, padding: 10, background: '#ffffff' }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>BU: {bu.name}</summary>
+                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                          <div className="toolbar">
+                            <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{buConditions.length} condition(s)</p>
+                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0} onClick={() => openConditionModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter condition</Button>
+                          </div>
+                          {buConditions.map(({ condition, index }) => (
+                            <div key={`bu-condition-${bu.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                              <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                              <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                            </div>
+                          ))}
+
+                          {buProducts.map((product) => {
+                            const productConditions = getConditionsForTarget({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id });
+                            return (
+                              <details key={product.id} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>Produit: {product.designation}</summary>
+                                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                  <div className="toolbar">
+                                    <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                  </div>
+                                  {productConditions.map(({ condition, index }) => (
+                                    <div key={`product-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                      <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                                      <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            );
+                          })}
+
+                          {buGroups.map((group) => {
+                            const groupConditions = getConditionsForTarget({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null });
+                            const groupProducts = selectedProductIds
+                              .map((id) => managedProducts.find((product) => product.id === id))
+                              .filter((product): product is CampaignManagedProduct => Boolean(product))
+                              .filter((product) => getCampaignDraftForProduct(product.id).campaign_group_brand_id === group.id);
+
+                            return (
+                              <details key={group.id} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>GROUP: {group.name}</summary>
+                                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                  <div className="toolbar">
+                                    <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{groupConditions.length} condition(s)</p>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0} onClick={() => openConditionModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter condition</Button>
+                                  </div>
+                                  {groupConditions.map(({ condition, index }) => (
+                                    <div key={`group-condition-${group.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                      <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                                      <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                    </div>
+                                  ))}
+
+                                  {groupProducts.map((product) => {
+                                    const productConditions = getConditionsForTarget({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id });
+                                    return (
+                                      <details key={product.id} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                        <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>Produit: {product.designation}</summary>
+                                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                          <div className="toolbar">
+                                            <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
+                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                          </div>
+                                          {productConditions.map(({ condition, index }) => (
+                                            <div key={`product-group-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                              <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
+                                              <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </details>
+                                    );
+                                  })}
+                                </div>
+                              </details>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
                 <div className="toolbar" style={{ marginTop: 12 }}>
                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
@@ -1538,6 +1706,68 @@ export const CampaignSetupPage = () => {
           </div>
         </Card>
       </div>
+
+      {conditionTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+          <Card style={{ width: 'min(620px, 92vw)' }}>
+            <div className="toolbar">
+              <h2 style={{ margin: 0 }}>Ajouter condition · {conditionTarget.label}</h2>
+              <Button variant="ghost" onClick={closeConditionModal}>Fermer</Button>
+            </div>
+            <div className="grid" style={{ gap: 10 }}>
+              {conditionModalError && (
+                <div style={{ border: '1px solid #fecaca', background: '#fff1f2', color: '#9f1239', borderRadius: 10, padding: '8px 10px', fontSize: 13 }}>
+                  {conditionModalError}
+                </div>
+              )}
+              <div>
+                <label>Nature de condition</label>
+                <Select value={conditionDraft.condition_kind} onChange={(e) => handleConditionKindChange(e.target.value)}>
+                  {currentConditionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </Select>
+              </div>
+              {currentConditionOption.requiresReferenceScope ? (
+                <div>
+                  <label>Référence du total (%)</label>
+                  <Select value={conditionDraft.reference_scope_type ?? ''} onChange={(e) => setConditionDraft((c) => ({ ...c, reference_scope_type: (e.target.value as CampaignScopeType) || null }))}>
+                    {currentConditionOption.allowedReferenceScopes.map((scope) => (
+                      <option key={scope} value={scope}>{scope === 'campaign' ? 'Campagne' : scope === 'business_unit' ? 'BU' : 'GROUP'}</option>
+                    ))}
+                  </Select>
+                </div>
+              ) : null}
+              <div className="grid grid-2" style={{ gap: 10 }}>
+                <div><label>Opérateur</label><Input value={conditionDraft.operator} disabled /></div>
+                <div><label>Valeur cible</label><Input type="number" min={0} max={isPercentConditionDraft ? 100 : undefined} step="0.001" value={conditionDraft.target_value} onChange={(e) => setConditionDraft((c) => ({ ...c, target_value: Number(e.target.value || 0) }))} /></div>
+              </div>
+              <div className="toolbar">
+                <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{conditions.length} condition(s) au total</p>
+                <Button variant="secondary" onClick={() => {
+                  setConditionModalError(null);
+                  if (!hasProductsForConditionTarget(conditionDraft)) {
+                    return setConditionModalError('Impossible d\'ajouter une condition sur un item sans produit.');
+                  }
+                  if (conditionDraft.target_value <= 0) return setConditionModalError('La valeur cible doit être supérieure à 0.');
+                  if (conditionDraft.unit === '%' && conditionDraft.target_value > 100) return setConditionModalError('Une valeur en pourcentage ne peut pas dépasser 100%.');
+                  if (hasDuplicateConditionKindForTarget(conditionDraft)) {
+                    return setConditionModalError('Cette nature de condition existe déjà pour cet item.');
+                  }
+                  const maxAmountError = validateMaxAmountConsistency(conditionDraft);
+                  if (maxAmountError) return setConditionModalError(maxAmountError);
+                  const hierarchyError = validateHierarchyConsistency(conditionDraft);
+                  if (hierarchyError) return setConditionModalError(hierarchyError);
+                  const row: CampaignCondition = { ...conditionDraft, phase: conditionsPhase, label: '' };
+                  row.label = generateConditionLabel(row);
+                  setConditions((current) => [...current, row]);
+                  closeConditionModal();
+                }}>
+                  Ajouter la condition
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {isCreateBuModalOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}>

@@ -13,7 +13,7 @@ import {
   updateLaboratory,
 } from '@/services/laboratories';
 import { getLaboratoryCatalogTree, LaboratoryCatalogTree } from '@/services/catalogue';
-import { bulkDeleteGroupBrands, bulkDeleteProducts, bulkMoveGroupBrands, bulkMoveProducts, deleteBusinessUnit } from '@/services/catalogBulk';
+import { bulkDeleteGroupBrands, bulkDetachProductsFromCatalog, bulkMoveGroupBrands, bulkMoveProducts, deleteBusinessUnit } from '@/services/catalogBulk';
 import { commitFirstBuMigration, createBusinessUnitOrRequireMigration, initFirstBuMigration, previewFirstBuMigration } from '@/services/catalogFirstBuMigration';
 import { ProductNature } from '@/services/products';
 import { supabase } from '@/lib/supabase';
@@ -55,6 +55,8 @@ export const LaboratoriesPage = () => {
   const [openBu, setOpenBu] = useState(true);
   const [openBrands, setOpenBrands] = useState<Record<string, boolean>>({});
   const [modeToast, setModeToast] = useState<string | null>(null);
+  const [catalogCleanupModalOpen, setCatalogCleanupModalOpen] = useState(false);
+  const [pendingCatalogCleanup, setPendingCatalogCleanup] = useState<{ brandIds: string[]; buIds: string[] } | null>(null);
 
   const actionLabel = useMemo(() => (editingId ? 'Mettre à jour' : 'Créer la fiche'), [editingId]);
 
@@ -114,10 +116,52 @@ export const LaboratoriesPage = () => {
     setSearch('');
   };
 
-  const closeCatalogBySave = () => {
+  const closeCatalogBySave = async () => {
+    if (!selectedLabId || !catalog) {
+      setCatalogHasPendingChanges(false);
+      setIsCatalogModalOpen(false);
+      setFeedback('Catalogue enregistré.');
+      return;
+    }
+
+    const emptyRootBrands = catalog.root_group_brands.filter((brand) => brand.products.length === 0).map((brand) => brand.id);
+    const emptyBuBrands = catalog.business_units.flatMap((bu) => bu.group_brands.filter((brand) => brand.products.length === 0).map((brand) => brand.id));
+    const emptyBrandIds = [...emptyRootBrands, ...emptyBuBrands];
+    const emptyBuIds = catalog.business_units.filter((bu) => bu.products.length === 0 && bu.group_brands.length === 0).map((bu) => bu.id);
+
+    if (emptyBrandIds.length || emptyBuIds.length) {
+      setPendingCatalogCleanup({ brandIds: emptyBrandIds, buIds: emptyBuIds });
+      setCatalogCleanupModalOpen(true);
+      return;
+    }
+
     setCatalogHasPendingChanges(false);
     setIsCatalogModalOpen(false);
     setFeedback('Catalogue enregistré.');
+  };
+
+  const confirmCatalogCleanupAndSave = async () => {
+    if (!selectedLabId || !pendingCatalogCleanup) return;
+    try {
+      if (pendingCatalogCleanup.brandIds.length) {
+        await bulkDeleteGroupBrands({
+          laboratoryId: selectedLabId,
+          groupBrandIds: pendingCatalogCleanup.brandIds,
+          mode: 'delete_with_products',
+        });
+      }
+      for (const buId of pendingCatalogCleanup.buIds) {
+        await deleteBusinessUnit(buId);
+      }
+      await loadCatalog(selectedLabId);
+      setCatalogCleanupModalOpen(false);
+      setPendingCatalogCleanup(null);
+      setCatalogHasPendingChanges(false);
+      setIsCatalogModalOpen(false);
+      setFeedback('Catalogue enregistré.');
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : 'Nettoyage des items vides impossible.');
+    }
   };
   const filteredLaboratories = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -150,11 +194,12 @@ export const LaboratoriesPage = () => {
   };
 
   const submitCreateBU = async () => {
-    if (!selectedLabId || !catalogActionValue.trim()) return;
+    const normalizedName = catalogActionValue.trim().toUpperCase();
+    if (!selectedLabId || !normalizedName) return;
     try {
-      const result = await createBusinessUnitOrRequireMigration(selectedLabId, catalogActionValue.trim());
+      const result = await createBusinessUnitOrRequireMigration(selectedLabId, normalizedName);
       if (result.status === 'migration_required') {
-        const init = await initFirstBuMigration(selectedLabId, catalogActionValue.trim());
+        const init = await initFirstBuMigration(selectedLabId, normalizedName);
         const plan = { products: init.inventory?.root_products?.map((p) => ({ id: p.id, target_type: 'business_unit' })) ?? [], group_brands: init.inventory?.root_group_brands?.map((b) => ({ id: b.id, target_type: 'business_unit' })) ?? [] };
         await previewFirstBuMigration(selectedLabId, init.migration_id, plan);
         setCatalogError('Création bloquée: ce laboratoire possède déjà des éléments à la racine (brands/produits). Veuillez les réorganiser avant de créer la première BU.');
@@ -170,10 +215,11 @@ export const LaboratoriesPage = () => {
   };
 
   const submitCreateRootBrand = async () => {
-    if (!selectedLabId || !catalogActionValue.trim()) return;
+    const normalizedName = catalogActionValue.trim().toUpperCase();
+    if (!selectedLabId || !normalizedName) return;
     if (filtered?.business_units.length && catalogView.type === 'root') return setCatalogError('Mode avec BU: sélectionnez d’abord une BU pour créer un brand.');
     const targetBuId = catalogView.type === 'business_unit' ? catalogView.id ?? null : null;
-    const { error } = await supabase.from('group_brands').insert({ laboratory_id: selectedLabId, name: catalogActionValue.trim(), business_unit_id: targetBuId });
+    const { error } = await supabase.from('group_brands').insert({ laboratory_id: selectedLabId, name: normalizedName, business_unit_id: targetBuId });
     if (error) return setFeedback(error.message);
     setCatalogHasPendingChanges(true);
     setCatalogActionModal(null);
@@ -185,10 +231,10 @@ export const LaboratoriesPage = () => {
   const removeProduct = async (productId: string) => {
     if (!selectedLabId) return;
     try {
-      await bulkDeleteProducts({ laboratoryId: selectedLabId, productIds: [productId] });
+      await bulkDetachProductsFromCatalog({ laboratoryId: selectedLabId, productIds: [productId] });
       setCatalogHasPendingChanges(true);
       await loadCatalog(selectedLabId);
-    } catch (error) { setCatalogError(error instanceof Error ? error.message : 'Suppression produit impossible.'); }
+    } catch (error) { setCatalogError(error instanceof Error ? error.message : 'Retrait du produit du catalogue impossible.'); }
   };
 
   const removeBrand = async (brandId: string) => {
@@ -393,11 +439,36 @@ export const LaboratoriesPage = () => {
 
     {catalogActionModal && <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}><Card style={{ width: 'min(640px, 94vw)' }}>
       <div className="toolbar"><h2>{catalogActionModal === 'create_bu' ? 'Créer une BU' : catalogActionModal === 'create_root_brand' ? 'Créer un brand racine' : catalogActionModal === 'move_products' ? 'Déplacer des produits' : catalogActionModal === 'move_brands' ? 'Déplacer des marques' : 'Ajouter un produit racine'}</h2><Button variant="ghost" onClick={closeCatalogActionModal}>Fermer</Button></div>
-      {(catalogActionModal === 'create_bu' || catalogActionModal === 'create_root_brand') && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value)} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
+      {(catalogActionModal === 'create_bu' || catalogActionModal === 'create_root_brand') && <div className="grid"><Input placeholder={catalogActionModal === 'create_bu' ? 'Nom de la BU' : 'Nom du brand'} value={catalogActionValue} onChange={(e) => setCatalogActionValue(e.target.value.toUpperCase())} /><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void (catalogActionModal === 'create_bu' ? submitCreateBU() : submitCreateRootBrand())}>Enregistrer</Button></div></div>}
       {catalogActionModal === 'create_root_product' && <div className="grid">{isLoadingAvailableProducts && <p>Chargement des produits disponibles…</p>}{!isLoadingAvailableProducts && availableProducts.length === 0 && <p>Aucun produit disponible à ajouter.</p>}{!isLoadingAvailableProducts && availableProducts.length > 0 && <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, padding: 8 }}>{availableProducts.map((product) => <label key={product.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}><input type="checkbox" checked={selectedProductIdsToAdd.includes(product.id)} onChange={(e) => setSelectedProductIdsToAdd((current) => e.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id))} /><span>{product.designation} ({product.nature})</span></label>)}</div>}<div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitAddProductsToCatalog()}>Ajouter la sélection</Button></div></div>}
       {catalogActionModal === 'move_products' && <div className="grid"><p>{selectedProducts.length} produit(s) sélectionné(s).</p><Select value={moveTargetType} onChange={(e) => { setMoveTargetType(e.target.value as 'business_unit' | 'group_brand'); setMoveTargetId(''); }}><option value="business_unit">Vers une BU</option><option value="group_brand">Vers une marque</option></Select><Select value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)}><option value="" disabled>Sélectionner la destination</option>{moveTargetType === 'business_unit' ? filtered?.business_units.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>) : (filtered?.business_units ?? []).flatMap((bu) => bu.group_brands.map((brand) => <option key={brand.id} value={brand.id}>{bu.name} / {brand.name}</option>))}</Select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitMoveSelectedProducts()}>Déplacer</Button></div></div>}
       {catalogActionModal === 'move_brands' && <div className="grid"><p>{selectedBrands.length} marque(s) sélectionnée(s).</p><Select value={moveTargetId} onChange={(e) => setMoveTargetId(e.target.value)}><option value="" disabled>Sélectionner la BU destination</option>{filtered?.business_units.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>)}</Select><div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}><Button variant="ghost" onClick={closeCatalogActionModal}>Annuler</Button><Button onClick={() => void submitMoveSelectedBrands()}>Déplacer</Button></div></div>}
     </Card></div>}
+
+    {catalogCleanupModalOpen && pendingCatalogCleanup && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 60 }}>
+        <Card style={{ width: 'min(560px, 92vw)' }}>
+          <h2>Confirmation avant enregistrement</h2>
+          <p>
+            {pendingCatalogCleanup.brandIds.length} marque(s) et {pendingCatalogCleanup.buIds.length} BU sans produit vont être supprimées pour éviter des créations inutiles.
+          </p>
+          <p>Voulez-vous continuer, ou revenir corriger le catalogue ?</p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCatalogCleanupModalOpen(false);
+                setPendingCatalogCleanup(null);
+                setFeedback('Enregistrement annulé: corrigez les items vides puis relancez.');
+              }}
+            >
+              Revenir corriger
+            </Button>
+            <Button onClick={() => void confirmCatalogCleanupAndSave()}>Confirmer et enregistrer</Button>
+          </div>
+        </Card>
+      </div>
+    )}
 
   </div>);
 };
