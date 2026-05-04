@@ -5,12 +5,11 @@ import { Card } from '@/components/ui/card';
 import { ActionDropdown, DropdownAction } from '@/components/ui/dropdown-menu';
 import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
-import { CampaignRow, CampaignStatus, createCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
+import { CampaignRow, CampaignStatus, createCampaign, deleteCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
 import { listLaboratories, Laboratory } from '@/services/laboratories';
 import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
 const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
-
 
 const CAMPAIGN_MIGRATIONS = [
   'supabase/migrations/20260501153000_add_campaigns_if_missing.sql',
@@ -36,6 +35,9 @@ export const CampaignsPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [campaignToDelete, setCampaignToDelete] = useState<CampaignRow | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
@@ -74,7 +76,9 @@ export const CampaignsPage = () => {
     setIsLoading(false);
   };
 
-  useEffect(() => { void loadData(); }, []);
+  useEffect(() => {
+    void loadData();
+  }, []);
 
   const filteredCampaigns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -112,8 +116,8 @@ export const CampaignsPage = () => {
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form.name.trim() || !form.laboratoryId || !form.startDate || !form.endDate) return setFeedback('Tous les champs de campagne sont obligatoires.');
-    if (form.endDate < form.startDate) return setFeedback('La date de clÃ´ture doit Ãªtre supÃ©rieure ou Ã©gale Ã  la date dâ€™ouverture.');
-    if (!selectedPharmacies.length) return setFeedback('SÃ©lectionnez au moins une pharmacie participante.');
+    if (form.endDate < form.startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
+    if (!selectedPharmacies.length) return setFeedback('Sélectionnez au moins une pharmacie participante.');
 
     setIsSaving(true);
     try {
@@ -126,43 +130,71 @@ export const CampaignsPage = () => {
       });
       await loadData();
       setIsModalOpen(false);
-      setFeedback('Campagne crÃ©Ã©e en brouillon.');
+      setFeedback('Campagne créée en brouillon.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'CrÃ©ation impossible.');
+      setFeedback(error instanceof Error ? error.message : 'Création impossible.');
     } finally {
       setIsSaving(false);
     }
   };
 
-
   const goToSetup = (campaignId: string) => {
     navigate(`/admin/campaigns/${campaignId}/setup`);
   };
 
+  const openDeleteModal = (campaignId: string) => {
+    const selectedCampaign = campaigns.find((campaign) => campaign.id === campaignId) ?? null;
+    setCampaignToDelete(selectedCampaign);
+    setIsDeleteModalOpen(true);
+  };
+
+  const closeDeleteModal = () => {
+    if (isDeleting) return;
+    setIsDeleteModalOpen(false);
+    setCampaignToDelete(null);
+  };
+
   const campaignActions = (campaignId: string): DropdownAction[] => ([
-    { label: 'ParamÃ©trer', onClick: () => goToSetup(campaignId) },
+    { label: 'Paramétrer', onClick: () => goToSetup(campaignId) },
     { label: 'Ouvrir', onClick: () => void changeStatus(campaignId, 'open') },
-    { label: 'ClÃ´turer', onClick: () => void changeStatus(campaignId, 'closed') },
+    { label: 'Clôturer', onClick: () => void changeStatus(campaignId, 'closed') },
     { label: 'Archiver', onClick: () => void changeStatus(campaignId, 'archived') },
+    { label: 'Supprimer', onClick: () => openDeleteModal(campaignId) },
   ]);
 
   const changeStatus = async (campaignId: string, status: CampaignStatus) => {
     try {
       await updateCampaignStatus(campaignId, status);
       await loadData();
-      setFeedback('Statut de campagne mis Ã  jour.');
+      setFeedback('Statut de campagne mis à jour.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Mise Ã  jour du statut impossible.');
+      setFeedback(error instanceof Error ? error.message : 'Mise à jour du statut impossible.');
+    }
+  };
+
+  const handleDeleteCampaign = async () => {
+    if (!campaignToDelete) return;
+    setIsDeleting(true);
+
+    try {
+      await deleteCampaign(campaignToDelete.id);
+      await loadData();
+      setFeedback('Campagne supprimée avec succès.');
+      closeDeleteModal();
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   return (
     <div className="grid">
-      <Card style={{ minHeight: "calc(100vh - 180px)", display: "flex", flexDirection: "column" }}>
+      <Card style={{ minHeight: 'calc(100vh - 180px)', display: 'flex', flexDirection: 'column' }}>
         <div className="toolbar">
           <div>
             <h1>Campagnes d&apos;achat</h1>
-            <p>CrÃ©er et piloter les campagnes via une table et des actions par ligne.</p>
+            <p>Créer et piloter les campagnes via une table et des actions par ligne.</p>
           </div>
           <Button onClick={openModal}>Nouvelle campagne</Button>
         </div>
@@ -172,7 +204,7 @@ export const CampaignsPage = () => {
         {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
         {isMissingCampaignSchema(feedback) && (
           <div style={{ marginTop: 8, padding: 12, border: '1px solid #fecaca', background: '#fff1f2', borderRadius: 10 }}>
-            <p style={{ margin: 0, fontWeight: 600 }}>Migrations Ã  appliquer</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>Migrations à appliquer</p>
             <ul style={{ marginTop: 8, marginBottom: 8 }}>
               {CAMPAIGN_MIGRATIONS.map((file) => <li key={file}><code>{file}</code></li>)}
             </ul>
@@ -188,7 +220,7 @@ export const CampaignsPage = () => {
                   <TableHeaderCell>Campagne</TableHeaderCell>
                   <TableHeaderCell>Laboratoire</TableHeaderCell>
                   <TableHeaderCell>Ouverture</TableHeaderCell>
-                  <TableHeaderCell>ClÃ´ture</TableHeaderCell>
+                  <TableHeaderCell>Clôture</TableHeaderCell>
                   <TableHeaderCell>Participants</TableHeaderCell>
                   <TableHeaderCell>Statut</TableHeaderCell>
                   <TableHeaderCell />
@@ -215,9 +247,9 @@ export const CampaignsPage = () => {
 
         {!isLoading && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-            <p style={{ margin: 0 }}>Page {page} / {totalPages} â€” {filteredCampaigns.length} campagne(s)</p>
+            <p style={{ margin: 0 }}>Page {page} / {totalPages} - {filteredCampaigns.length} campagne(s)</p>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Button variant="secondary" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>PrÃ©cÃ©dent</Button>
+              <Button variant="secondary" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Précédent</Button>
               <Button variant="secondary" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={page === totalPages}>Suivant</Button>
             </div>
           </div>
@@ -228,13 +260,13 @@ export const CampaignsPage = () => {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}>
           <Card>
             <div className="toolbar">
-              <h2>CrÃ©er une campagne</h2>
+              <h2>Créer une campagne</h2>
               <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button>
             </div>
             <form className="grid" onSubmit={handleSubmit}>
-              <Input placeholder="DÃ©nomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
+              <Input placeholder="Dénomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
               <Select value={form.laboratoryId} onChange={(event) => setForm((current) => ({ ...current, laboratoryId: event.target.value }))} required>
-                <option value="">SÃ©lectionner un laboratoire</option>
+                <option value="">Sélectionner un laboratoire</option>
                 {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
               </Select>
               <div className="grid grid-2">
@@ -242,7 +274,7 @@ export const CampaignsPage = () => {
                 <Input type="date" value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required />
               </div>
               <div>
-                <p>Pharmacies concernÃ©es</p>
+                <p>Pharmacies concernées</p>
                 <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
                   {!pharmacies.length && <p style={{ gridColumn: '1 / -1' }}>Aucune pharmacie active disponible.</p>}
                   {pharmacies.map((pharmacy) => (
@@ -253,8 +285,29 @@ export const CampaignsPage = () => {
                   ))}
                 </div>
               </div>
-              <Button type="submit" disabled={isSaving}>{isSaving ? 'CrÃ©ation...' : 'CrÃ©er en brouillon'}</Button>
+              <Button type="submit" disabled={isSaving}>{isSaving ? 'Création...' : 'Créer en brouillon'}</Button>
             </form>
+          </Card>
+        </div>
+      )}
+
+      {isDeleteModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 40 }}>
+          <Card>
+            <div className="toolbar">
+              <h2>Supprimer la campagne</h2>
+              <Button variant="ghost" onClick={closeDeleteModal} disabled={isDeleting}>Fermer</Button>
+            </div>
+            <div className="grid">
+              <p>Confirmer la suppression de <strong>{campaignToDelete?.name ?? 'cette campagne'}</strong> ?</p>
+              <p>La suppression est autorisée uniquement pour les campagnes en brouillon ou sans participant ayant postulé.</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <Button variant="secondary" onClick={closeDeleteModal} disabled={isDeleting}>Annuler</Button>
+                <Button variant="danger" onClick={() => void handleDeleteCampaign()} disabled={isDeleting}>
+                  {isDeleting ? 'Suppression...' : 'Supprimer'}
+                </Button>
+              </div>
+            </div>
           </Card>
         </div>
       )}

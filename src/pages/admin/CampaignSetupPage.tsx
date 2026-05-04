@@ -12,6 +12,7 @@ import {
   CampaignScopeType,
   CampaignConditionPhase,
   BonificationNature,
+  BonificationCashMode,
   BonificationValueType,
   CampaignCondition,
   CampaignBonification,
@@ -35,6 +36,7 @@ import {
   listManagedProductsForLaboratory,
   replaceCampaignParticipants,
   saveCampaignProductConfiguration,
+  resetCampaignArrangementContainers,
   listCampaignConditions,
   saveCampaignConditions,
   listCampaignBonifications,
@@ -52,6 +54,30 @@ type ProductsView = 'select' | 'arrange';
 type AssignTarget = { buId: string | null; groupId: string | null; label: string };
 type ConditionKindOption = { value: string; label: string; unit: string; operator: string; requiresReferenceScope: boolean; allowedReferenceScopes: CampaignScopeType[] };
 type ConditionTarget = {
+  scope_type: CampaignScopeType;
+  campaign_business_unit_id: string | null;
+  campaign_group_brand_id: string | null;
+  product_id: string | null;
+  label: string;
+};
+type ConditionValidationReport = { blocking: string[]; warnings: string[] };
+type ConditionRuleCode =
+  | 'COND_SCOPE_001'
+  | 'COND_SCOPE_002'
+  | 'COND_SCOPE_003'
+  | 'COND_SCOPE_004'
+  | 'COND_ITEM_001'
+  | 'COND_VALUE_001'
+  | 'COND_PCT_001'
+  | 'COND_PCT_002'
+  | 'COND_DUP_001'
+  | 'COND_MINMAX_001'
+  | 'COND_MOD_001'
+  | 'COND_PCTSUM_001'
+  | 'COND_WARN_001'
+  | 'COND_WARN_002'
+  | 'COND_WARN_003';
+type BonificationTarget = {
   scope_type: CampaignScopeType;
   campaign_business_unit_id: string | null;
   campaign_group_brand_id: string | null;
@@ -146,6 +172,8 @@ export const CampaignSetupPage = () => {
   const [conditionsPhase, setConditionsPhase] = useState<CampaignConditionPhase>('both');
   const [conditionTarget, setConditionTarget] = useState<ConditionTarget | null>(null);
   const [conditionModalError, setConditionModalError] = useState<string | null>(null);
+  const [bonificationTarget, setBonificationTarget] = useState<BonificationTarget | null>(null);
+  const [bonificationModalError, setBonificationModalError] = useState<string | null>(null);
   const [conditionDraft, setConditionDraft] = useState<CampaignCondition>({
     scope_type: 'campaign',
     campaign_business_unit_id: null,
@@ -168,6 +196,10 @@ export const CampaignSetupPage = () => {
     value_type: 'percent',
     value: 0,
     nature: 'purchase_voucher',
+    cash_mode: null,
+    buy_qty_threshold: null,
+    free_qty: null,
+    is_repeatable: null,
   });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -544,12 +576,18 @@ export const CampaignSetupPage = () => {
   };
 
   const ensureCampaignContainersFromLaboratory = async () => {
-    if (!campaignId) return { busByName: new Map<string, string>(), groupsByKey: new Map<string, string>() };
+    if (!campaignId) {
+      return {
+        busByName: new Map<string, string>(),
+        groupsByKey: new Map<string, string>(),
+        arrangementsByProductId: new Map<string, ProductArrangementDraft>(),
+      };
+    }
     const locationMap = buildProductLocationMap();
-    const busByName = new Map<string, string>(businessUnits.map((bu) => [bu.name.toLowerCase(), bu.id]));
-    const groupsByKey = new Map<string, string>(
-      groupBrands.map((group) => [`${(group.campaign_business_unit_id ?? 'root')}::${group.name.toLowerCase()}`, group.id]),
-    );
+    await resetCampaignArrangementContainers(campaignId);
+    const busByName = new Map<string, string>();
+    const groupsByKey = new Map<string, string>();
+    const arrangementsByProductId = new Map<string, ProductArrangementDraft>();
 
     for (const productId of selectedProductIds) {
       const location = locationMap.get(productId);
@@ -571,10 +609,18 @@ export const CampaignSetupPage = () => {
           groupsByKey.set(groupKey, created.id);
         }
       }
+
+      const currentGroupId = location.groupName
+        ? (groupsByKey.get(`${campaignBuId ?? 'root'}::${location.groupName.toLowerCase()}`) ?? null)
+        : null;
+      arrangementsByProductId.set(productId, {
+        campaign_business_unit_id: campaignBuId,
+        campaign_group_brand_id: currentGroupId,
+      });
     }
 
     await loadProductScopeData(laboratoryId);
-    return { busByName, groupsByKey };
+    return { busByName, groupsByKey, arrangementsByProductId };
   };
 
   const saveProducts = async () => {
@@ -603,21 +649,18 @@ export const CampaignSetupPage = () => {
     setIsSavingProducts(true);
     setFeedback(null);
     try {
-      let inheritLookup: { busByName: Map<string, string>; groupsByKey: Map<string, string> } | null = null;
+      let inheritLookup: { busByName: Map<string, string>; groupsByKey: Map<string, string>; arrangementsByProductId: Map<string, ProductArrangementDraft> } | null = null;
       if (arrangementMode === 'inherit_laboratory') {
         inheritLookup = await ensureCampaignContainersFromLaboratory();
       }
 
-      const locationMap = buildProductLocationMap();
       const arrangements: CampaignProductArrangementRow[] = selectedProductIds.map((productId) => {
         if (arrangementMode === 'inherit_laboratory') {
-          const location = locationMap.get(productId);
-          const buId = location?.buName ? (inheritLookup?.busByName.get(location.buName.toLowerCase()) ?? null) : null;
-          const groupId = location?.groupName ? (inheritLookup?.groupsByKey.get(`${buId ?? 'root'}::${location.groupName.toLowerCase()}`) ?? null) : null;
+          const resolved = inheritLookup?.arrangementsByProductId.get(productId) ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
           return {
             product_id: productId,
-            campaign_business_unit_id: buId,
-            campaign_group_brand_id: groupId,
+            campaign_business_unit_id: resolved.campaign_business_unit_id,
+            campaign_group_brand_id: resolved.campaign_group_brand_id,
           };
         }
 
@@ -698,8 +741,15 @@ export const CampaignSetupPage = () => {
   const saveConditionsStep = async () => {
     if (!campaignId) return;
     if (!conditions.length) return setFeedback('Ajoutez au moins une condition avant validation.');
+    const report = validateConditionCollection(conditions);
+    if (report.blocking.length) {
+      return setFeedback(`Validation impossible: ${report.blocking[0]}`);
+    }
+    if (report.warnings.length) {
+      setFeedback(`Alerte cohérence: ${report.warnings[0]}`);
+    }
     setIsSavingConditions(true);
-    setFeedback(null);
+    if (!report.warnings.length) setFeedback(null);
     try {
       await saveCampaignConditions(campaignId, conditions.map((row) => ({ ...row, phase: conditionsPhase })));
       showToast('Conditions enregistrées avec succès.');
@@ -755,6 +805,40 @@ export const CampaignSetupPage = () => {
     setConditionModalError(null);
   };
 
+  const bonificationNatureLabel = (nature: BonificationNature, cashMode: BonificationCashMode | null) => {
+    if (nature === 'products') return 'Produits en nature';
+    if (nature === 'purchase_voucher') return "Bon d'achat";
+    return cashMode === 'check' ? 'Argent (cheque)' : 'Argent (virement)';
+  };
+
+  const openBonificationModal = (target: BonificationTarget) => {
+    if (!hasProductsForConditionTarget(target)) {
+      setFeedback('Impossible d\'ajouter une bonification sur un item sans produit.');
+      return;
+    }
+    setBonificationModalError(null);
+    setBonificationTarget(target);
+    setBonificationDraft({
+      scope_type: target.scope_type,
+      campaign_business_unit_id: target.campaign_business_unit_id,
+      campaign_group_brand_id: target.campaign_group_brand_id,
+      product_id: target.product_id,
+      label: '',
+      value_type: 'percent',
+      value: 0,
+      nature: 'purchase_voucher',
+      cash_mode: null,
+      buy_qty_threshold: null,
+      free_qty: null,
+      is_repeatable: null,
+    });
+  };
+
+  const closeBonificationModal = () => {
+    setBonificationTarget(null);
+    setBonificationModalError(null);
+  };
+
   const handleConditionKindChange = (nextKind: string) => {
     const nextOption = CONDITION_KIND_OPTIONS_BY_SCOPE[conditionDraft.scope_type].find((option) => option.value === nextKind);
     if (!nextOption) return;
@@ -785,6 +869,26 @@ export const CampaignSetupPage = () => {
     return `${scopeLabel}: ${kindLabel} ${row.operator} ${row.target_value}${row.unit ? ` ${row.unit}` : ''}${refLabel}`;
   };
 
+  const generateBonificationLabel = (row: CampaignBonification) => {
+    const buName = row.campaign_business_unit_id ? (businessUnits.find((bu) => bu.id === row.campaign_business_unit_id)?.name ?? 'BU') : null;
+    const groupName = row.campaign_group_brand_id ? (groupBrands.find((g) => g.id === row.campaign_group_brand_id)?.name ?? 'GROUP') : null;
+    const productName = row.product_id ? (managedProducts.find((p) => p.id === row.product_id)?.designation ?? 'Produit') : null;
+    const scopeLabel = row.scope_type === 'campaign'
+      ? 'Campagne'
+      : row.scope_type === 'business_unit'
+        ? `BU ${buName ?? ''}`.trim()
+        : row.scope_type === 'group_brand'
+          ? `GROUP ${groupName ?? ''}`.trim()
+          : `Produit ${productName ?? ''}`.trim();
+    if (row.nature === 'products') {
+      const x = row.buy_qty_threshold ?? 0;
+      const y = row.free_qty ?? 0;
+      const repeat = row.is_repeatable ? ' (repetable)' : '';
+      return `${scopeLabel}: Gratuite ${x}+${y}${repeat}`;
+    }
+    return `${scopeLabel}: ${bonificationNatureLabel(row.nature, row.cash_mode)} - ${row.value_type === 'percent' ? `${row.value}%` : `${row.value} TND`}`;
+  };
+
   const getConditionsForTarget = (target: Omit<ConditionTarget, 'label'>) => (
     conditions
       .map((condition, index) => ({ condition, index }))
@@ -793,6 +897,17 @@ export const CampaignSetupPage = () => {
         && (condition.campaign_business_unit_id ?? null) === target.campaign_business_unit_id
         && (condition.campaign_group_brand_id ?? null) === target.campaign_group_brand_id
         && (condition.product_id ?? null) === target.product_id
+      ))
+  );
+
+  const getBonificationsForTarget = (target: Omit<BonificationTarget, 'label'>) => (
+    bonifications
+      .map((bonification, index) => ({ bonification, index }))
+      .filter(({ bonification }) => (
+        bonification.scope_type === target.scope_type
+        && (bonification.campaign_business_unit_id ?? null) === target.campaign_business_unit_id
+        && (bonification.campaign_group_brand_id ?? null) === target.campaign_group_brand_id
+        && (bonification.product_id ?? null) === target.product_id
       ))
   );
 
@@ -872,6 +987,120 @@ export const CampaignSetupPage = () => {
 
   const hasDuplicateConditionKindForTarget = (draft: CampaignCondition) =>
     conditions.some((row) => row.condition_kind === draft.condition_kind && getConditionTargetKey(row) === getConditionTargetKey(draft));
+
+  const getConditionMetric = (kind: string): 'amount' | 'qty' | 'pct' | 'modulo' | 'other' => {
+    if (kind.includes('_modulo_')) return 'modulo';
+    if (kind.includes('_pct_')) return 'pct';
+    if (kind.includes('_amount')) return 'amount';
+    if (kind.includes('_qty')) return 'qty';
+    return 'other';
+  };
+
+  const withRuleCode = (code: ConditionRuleCode, message: string) => `[${code}] ${message}`;
+
+  const getConditionBound = (kind: string): 'min' | 'max' | null => {
+    if (kind.includes('_min_') || kind.endsWith('_min_amount') || kind.endsWith('_min_qty')) return 'min';
+    if (kind.includes('_max_') || kind.endsWith('_max_amount') || kind.endsWith('_max_qty')) return 'max';
+    return null;
+  };
+
+  const validateConditionScopeShape = (row: CampaignCondition): string | null => {
+    if (row.scope_type === 'campaign') {
+      if (row.campaign_business_unit_id || row.campaign_group_brand_id || row.product_id) return withRuleCode('COND_SCOPE_001', 'Scope campagne invalide: BU/GROUP/Produit doivent être vides.');
+      return null;
+    }
+    if (row.scope_type === 'business_unit') {
+      if (!row.campaign_business_unit_id || row.campaign_group_brand_id || row.product_id) return withRuleCode('COND_SCOPE_002', 'Scope BU invalide: BU obligatoire, GROUP/Produit vides.');
+      return null;
+    }
+    if (row.scope_type === 'group_brand') {
+      if (!row.campaign_business_unit_id || !row.campaign_group_brand_id || row.product_id) return withRuleCode('COND_SCOPE_003', 'Scope GROUP invalide: BU+GROUP obligatoires, Produit vide.');
+      return null;
+    }
+    if (row.scope_type === 'product') {
+      if (!row.product_id) return withRuleCode('COND_SCOPE_004', 'Scope produit invalide: Produit obligatoire.');
+      return null;
+    }
+    return null;
+  };
+
+  const validateConditionCollection = (rows: CampaignCondition[]): ConditionValidationReport => {
+    const blocking: string[] = [];
+    const warnings: string[] = [];
+    const byTarget = new Map<string, CampaignCondition[]>();
+
+    rows.forEach((row) => {
+      const scopeShapeError = validateConditionScopeShape(row);
+      if (scopeShapeError) blocking.push(scopeShapeError);
+      if (row.target_value <= 0) blocking.push(withRuleCode('COND_VALUE_001', `Condition invalide (${row.label || row.condition_kind}): la valeur doit être > 0.`));
+      if (row.unit === '%' && row.target_value > 100) blocking.push(withRuleCode('COND_PCT_001', `Condition invalide (${row.label || row.condition_kind}): un % ne peut pas dépasser 100.`));
+      if (row.condition_kind.includes('_pct_')) {
+        const allowed = CONDITION_KIND_OPTIONS_BY_SCOPE[row.scope_type].find((opt) => opt.value === row.condition_kind)?.allowedReferenceScopes ?? [];
+        if (!row.reference_scope_type || !allowed.includes(row.reference_scope_type)) {
+          blocking.push(withRuleCode('COND_PCT_002', `Condition ${row.condition_kind}: référence de total manquante ou non autorisée.`));
+        }
+      }
+      const key = getConditionTargetKey(row);
+      byTarget.set(key, [...(byTarget.get(key) ?? []), row]);
+      if (!hasProductsForConditionTarget(row)) blocking.push(withRuleCode('COND_ITEM_001', `Item sans produit: impossible d'appliquer "${row.condition_kind}".`));
+    });
+
+    byTarget.forEach((targetRows) => {
+      const kinds = new Set<string>();
+      targetRows.forEach((row) => {
+        if (kinds.has(row.condition_kind)) blocking.push(withRuleCode('COND_DUP_001', `Doublon: la nature "${row.condition_kind}" existe plusieurs fois sur un même item.`));
+        kinds.add(row.condition_kind);
+      });
+
+      const metrics = new Map<string, { min?: number; max?: number; modulo?: number }>();
+      targetRows.forEach((row) => {
+        const metric = getConditionMetric(row.condition_kind);
+        const bound = getConditionBound(row.condition_kind);
+        const current = metrics.get(metric) ?? {};
+        if (bound === 'min') current.min = row.target_value;
+        if (bound === 'max') current.max = row.target_value;
+        if (metric === 'modulo') current.modulo = row.target_value;
+        metrics.set(metric, current);
+      });
+      metrics.forEach((v, metric) => {
+        if (v.min !== undefined && v.max !== undefined && v.min > v.max) {
+          blocking.push(withRuleCode('COND_MINMAX_001', `Contradiction: min > max pour une métrique ${metric} sur un item.`));
+        }
+        if ((v.min !== undefined) !== (v.max !== undefined)) {
+          warnings.push(withRuleCode('COND_WARN_001', `Alerte: métrique ${metric} avec uniquement ${v.min !== undefined ? 'min' : 'max'} sur un item.`));
+        }
+        if (metric === 'modulo' && v.modulo !== undefined && !Number.isInteger(v.modulo)) {
+          blocking.push(withRuleCode('COND_MOD_001', 'Condition modulo invalide: la valeur doit être un entier.'));
+        }
+      });
+      if (targetRows.length >= 4) warnings.push(withRuleCode('COND_WARN_002', 'Alerte: item fortement contraint (4 conditions ou plus).'));
+    });
+
+    const hasCampaignOrBranchCoverage = rows.some((r) => r.scope_type === 'campaign') || businessUnits.every((bu) => (
+      rows.some((r) => r.scope_type === 'business_unit' && r.campaign_business_unit_id === bu.id)
+      || groupBrands.filter((g) => g.campaign_business_unit_id === bu.id).every((group) => rows.some((r) => r.scope_type === 'group_brand' && r.campaign_group_brand_id === group.id))
+    ));
+    if (!hasCampaignOrBranchCoverage) warnings.push(withRuleCode('COND_WARN_003', 'Alerte: couverture conditionnelle partielle (ni racine campagne, ni couverture complète des branches).'));
+
+    const pctByTarget = new Map<string, number>();
+    rows.filter((r) => r.condition_kind.includes('_min_pct_')).forEach((r) => {
+      const key = getConditionTargetKey(r);
+      pctByTarget.set(key, (pctByTarget.get(key) ?? 0) + r.target_value);
+    });
+    pctByTarget.forEach((sum) => {
+      if (sum > 100) blocking.push(withRuleCode('COND_PCTSUM_001', 'Contradiction: somme des % minimaux > 100 sur un même item.'));
+    });
+
+    return { blocking, warnings };
+  };
+
+  const conditionsValidationReport = useMemo(() => validateConditionCollection(conditions), [conditions]);
+
+  const getBonificationTargetKey = (row: Pick<CampaignBonification, 'scope_type' | 'campaign_business_unit_id' | 'campaign_group_brand_id' | 'product_id'>) =>
+    `${row.scope_type}|${row.campaign_business_unit_id ?? 'null'}|${row.campaign_group_brand_id ?? 'null'}|${row.product_id ?? 'null'}`;
+
+  const hasDuplicateBonificationNatureForTarget = (draft: CampaignBonification) =>
+    bonifications.some((row) => row.nature === draft.nature && getBonificationTargetKey(row) === getBonificationTargetKey(draft));
 
   const findMaxAmountValue = (scope: CampaignScopeType, buId: string | null, groupId: string | null, productId: string | null) => {
     const kind = scope === 'campaign'
@@ -1059,7 +1288,13 @@ export const CampaignSetupPage = () => {
                   Inspiré du setup Resend, adapté à votre workflow de campagne.
                 </p>
               </div>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
+              <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Règles de paramétrage</p>
+                  <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. La phase livraison est obligatoire.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. Les phases limitées doivent avoir des dates cohérentes.</p>
+                </div>
+                <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
                 <div className="toolbar" style={{ marginBottom: 12 }}>
                   <p style={{ margin: 0, fontWeight: 600 }}>Identification de la campagne</p>
                   <Button
@@ -1095,6 +1330,7 @@ export const CampaignSetupPage = () => {
                     <label>Date de clôture</label>
                     <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={!isEditingDetails} />
                   </div>
+                </div>
                 </div>
               </div>
               <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
@@ -1178,7 +1414,13 @@ export const CampaignSetupPage = () => {
                   Sélectionnez les pharmacies participantes qui auront accès à cette campagne.
                 </p>
               </div>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
+              <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Règles d&apos;audience</p>
+                  <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. Sélectionnez au moins une pharmacie active.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. Validez l&apos;audience avant la validation finale.</p>
+                </div>
+                <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
                 <div className="toolbar" style={{ marginBottom: 12 }}>
                   <p style={{ margin: 0, fontWeight: 600 }}>Pharmacies participantes</p>
                   <p style={{ margin: 0, color: '#71717a', fontSize: 13 }}>{selectedPharmacyIds.length} sélectionnée(s)</p>
@@ -1234,6 +1476,7 @@ export const CampaignSetupPage = () => {
                     {isSavingAudience ? 'Enregistrement...' : 'Enregistrer l’audience'}
                   </Button>
                 </div>
+                </div>
               </div>
               <div style={{ border: '1px dashed #d0d5dd', borderRadius: 12, padding: 14 }}>
                 <p style={{ margin: 0, fontWeight: 600 }}>Aperçu audience</p>
@@ -1253,9 +1496,16 @@ export const CampaignSetupPage = () => {
                 </p>
               </div>
 
-              <div style={{ display: 'flex', gap: 8, border: '1px solid #e4e4e7', borderRadius: 12, padding: 8 }}>
-                <Button variant={productsView === 'select' ? 'default' : 'secondary'} onClick={() => setProductsView('select')}>1. Sélection</Button>
-                <Button variant={productsView === 'arrange' ? 'default' : 'secondary'} onClick={() => setProductsView('arrange')} disabled={!selectedProductIds.length}>2. Arrangement</Button>
+              <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 10, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Règles produits</p>
+                  <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. Commencez par la sélection puis passez à l&apos;arrangement.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. En mode personnalisé, BU/GROUP ne doivent pas être vides.</p>
+                </div>
+                <div style={{ display: 'flex', gap: 8, border: '1px solid #e4e4e7', borderRadius: 12, padding: 8 }}>
+                  <Button variant={productsView === 'select' ? 'default' : 'secondary'} onClick={() => setProductsView('select')}>1. Sélection</Button>
+                  <Button variant={productsView === 'arrange' ? 'default' : 'secondary'} onClick={() => setProductsView('arrange')} disabled={!selectedProductIds.length}>2. Arrangement</Button>
+                </div>
               </div>
 
               {productsView === 'select' && (
@@ -1470,6 +1720,22 @@ export const CampaignSetupPage = () => {
                   <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. Une même nature de condition ne peut exister qu&apos;une fois par item.</p>
                   <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>3. Les montants maximaux doivent rester cohérents dans la hiérarchie: Campagne ≥ BU ≥ GROUP ≥ Produit.</p>
                 </div>
+                {conditionsValidationReport.blocking.length ? (
+                  <div style={{ marginBottom: 10, border: '1px solid #fecaca', borderRadius: 12, background: '#fff1f2', padding: '10px 12px' }}>
+                    <p style={{ margin: 0, fontWeight: 700, color: '#9f1239', fontSize: 13 }}>Erreurs bloquantes ({conditionsValidationReport.blocking.length})</p>
+                    {conditionsValidationReport.blocking.slice(0, 5).map((issue, idx) => (
+                      <p key={`blocking-${idx}`} style={{ margin: idx === 0 ? '6px 0 0' : '4px 0 0', color: '#9f1239', fontSize: 13 }}>{idx + 1}. {issue}</p>
+                    ))}
+                  </div>
+                ) : null}
+                {conditionsValidationReport.warnings.length ? (
+                  <div style={{ marginBottom: 10, border: '1px solid #fde68a', borderRadius: 12, background: '#fffbeb', padding: '10px 12px' }}>
+                    <p style={{ margin: 0, fontWeight: 700, color: '#92400e', fontSize: 13 }}>Alertes ({conditionsValidationReport.warnings.length})</p>
+                    {conditionsValidationReport.warnings.slice(0, 5).map((issue, idx) => (
+                      <p key={`warning-${idx}`} style={{ margin: idx === 0 ? '6px 0 0' : '4px 0 0', color: '#92400e', fontSize: 13 }}>{idx + 1}. {issue}</p>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="grid" style={{ gap: 10 }}>
                       <details open style={{ border: '1px solid #bbf7d0', borderRadius: 12, padding: 10, background: '#ffffff' }}>
                     <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Racine campagne</summary>
@@ -1629,63 +1895,130 @@ export const CampaignSetupPage = () => {
 
           {step === 'bonifications' && (
             <div className="grid" style={{ gap: 16 }}>
-              <h2 style={{ margin: 0 }}>Bonifications</h2>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
-                <p style={{ marginTop: 0, marginBottom: 10, fontWeight: 600 }}>Nouvelle bonification</p>
-                <div className="grid grid-2" style={{ gap: 10 }}>
-                  <div><label>Libellé</label><Input value={bonificationDraft.label} onChange={(e) => setBonificationDraft((b) => ({ ...b, label: e.target.value }))} /></div>
-                  <div><label>Portée</label><Select value={bonificationDraft.scope_type} onChange={(e) => setBonificationDraft((b) => ({ ...b, scope_type: e.target.value as CampaignScopeType, campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }))}><option value="campaign">Campagne</option><option value="business_unit">BU</option><option value="group_brand">GROUP</option><option value="product">Produit</option></Select></div>
-                  <div><label>Valorisation</label><Select value={bonificationDraft.value_type} onChange={(e) => setBonificationDraft((b) => ({ ...b, value_type: e.target.value as BonificationValueType }))}><option value="percent">%</option><option value="amount">Montant</option></Select></div>
-                  <div><label>Valeur</label><Input type="number" min={0} step="0.001" value={bonificationDraft.value} onChange={(e) => setBonificationDraft((b) => ({ ...b, value: Number(e.target.value || 0) }))} /></div>
-                  <div><label>Nature</label><Select value={bonificationDraft.nature} onChange={(e) => setBonificationDraft((b) => ({ ...b, nature: e.target.value as BonificationNature }))}><option value="purchase_voucher">Bons d'achat</option><option value="cash">Argent</option><option value="products">Produits</option></Select></div>
-                </div>
-                {bonificationDraft.scope_type === 'business_unit' || bonificationDraft.scope_type === 'group_brand' || bonificationDraft.scope_type === 'product' ? (
-                  <div style={{ marginTop: 10 }}>
-                    <label>BU</label>
-                    <Select value={bonificationDraft.campaign_business_unit_id ?? ''} onChange={(e) => setBonificationDraft((b) => ({ ...b, campaign_business_unit_id: e.target.value || null, campaign_group_brand_id: null, product_id: null }))}>
-                      <option value="">Sélectionner</option>
-                      {businessUnits.map((bu) => <option key={bu.id} value={bu.id}>{bu.name}</option>)}
-                    </Select>
-                  </div>
-                ) : null}
-                {bonificationDraft.scope_type === 'group_brand' || bonificationDraft.scope_type === 'product' ? (
-                  <div style={{ marginTop: 10 }}>
-                    <label>GROUP</label>
-                    <Select value={bonificationDraft.campaign_group_brand_id ?? ''} onChange={(e) => setBonificationDraft((b) => ({ ...b, campaign_group_brand_id: e.target.value || null, product_id: null }))}>
-                      <option value="">Sélectionner</option>
-                      {groupBrands.filter((g) => g.campaign_business_unit_id === (bonificationDraft.campaign_business_unit_id ?? null)).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </Select>
-                  </div>
-                ) : null}
-                {bonificationDraft.scope_type === 'product' ? (
-                  <div style={{ marginTop: 10 }}>
-                    <label>Produit</label>
-                    <Select value={bonificationDraft.product_id ?? ''} onChange={(e) => setBonificationDraft((b) => ({ ...b, product_id: e.target.value || null }))}>
-                      <option value="">Sélectionner</option>
-                      {selectedProductIds.map((id) => managedProducts.find((p) => p.id === id)).filter((p): p is CampaignManagedProduct => Boolean(p)).map((p) => <option key={p.id} value={p.id}>{p.designation}</option>)}
-                    </Select>
-                  </div>
-                ) : null}
-                <div style={{ marginTop: 12 }}>
-                  <Button variant="secondary" onClick={() => {
-                    if (!bonificationDraft.label.trim()) return setFeedback('Le libellé de bonification est obligatoire.');
-                    setBonifications((current) => [...current, { ...bonificationDraft, label: bonificationDraft.label.trim() }]);
-                    setBonificationDraft({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: '', value_type: 'percent', value: 0, nature: 'purchase_voucher' });
-                  }}>Ajouter la bonification</Button>
-                </div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <h2 style={{ margin: 0 }}>Bonifications</h2>
+                <p style={{ margin: 0, color: '#71717a', fontSize: 14 }}>
+                  Ajoutez une bonification depuis chaque item (BU, GROUP, Produit), puis validez l&apos;ensemble.
+                </p>
               </div>
-              <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
-                <p style={{ marginTop: 0, marginBottom: 8, fontWeight: 600 }}>Bonifications définies ({bonifications.length})</p>
-                <div className="grid" style={{ gap: 8 }}>
-                  {bonifications.map((bonification, idx) => (
-                    <div key={`${bonification.label}-${idx}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
-                      <p style={{ margin: 0, fontSize: 14 }}>{bonification.label} · {bonification.value_type === 'percent' ? `${bonification.value}%` : bonification.value} · {bonification.nature}</p>
-                      <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== idx))}>Retirer</Button>
-                    </div>
-                  ))}
+              <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Regles d&apos;integrite</p>
+                  <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. Un item sans produit ne peut pas recevoir de bonification.</p>
+                  <p style={{ margin: '4px 0 0', color: '#365314', fontSize: 13 }}>2. Une meme nature de bonification ne peut exister qu&apos;une fois par item.</p>
                 </div>
-                <div style={{ marginTop: 12 }}>
-                  <Button variant="secondary" onClick={() => void saveBonificationsStep()} disabled={isSavingBonifications}>{isSavingBonifications ? 'Enregistrement...' : 'Enregistrer les bonifications'}</Button>
+                <div className="grid" style={{ gap: 10 }}>
+                  <details open style={{ border: '1px solid #bbf7d0', borderRadius: 12, padding: 10, background: '#ffffff' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Racine campagne</summary>
+                    <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                      <div className="toolbar">
+                        <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{getBonificationsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).length} bonification(s)</p>
+                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length} onClick={() => openBonificationModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>Ajouter bonification</Button>
+                      </div>
+                      {getBonificationsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).map(({ bonification, index }) => (
+                        <div key={`campaign-bonification-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                          <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
+                          <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                  {businessUnits.map((bu) => {
+                    const buBonifications = getBonificationsForTarget({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null });
+                    const buProducts = selectedProductIds
+                      .map((id) => managedProducts.find((product) => product.id === id))
+                      .filter((product): product is CampaignManagedProduct => Boolean(product))
+                      .filter((product) => {
+                        const draft = getCampaignDraftForProduct(product.id);
+                        return draft.campaign_business_unit_id === bu.id && !draft.campaign_group_brand_id;
+                      });
+                    const buGroups = groupBrands.filter((group) => group.campaign_business_unit_id === bu.id);
+                    return (
+                      <details key={`bonif-bu-${bu.id}`} open style={{ border: '1px solid #bbf7d0', borderRadius: 12, padding: 10, background: '#ffffff' }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>BU: {bu.name}</summary>
+                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                          <div className="toolbar">
+                            <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{buBonifications.length} bonification(s)</p>
+                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0} onClick={() => openBonificationModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter bonification</Button>
+                          </div>
+                          {buBonifications.map(({ bonification, index }) => (
+                            <div key={`bonif-bu-row-${bu.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                              <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
+                              <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                            </div>
+                          ))}
+                          {buProducts.map((product) => {
+                            const productBonifications = getBonificationsForTarget({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id });
+                            return (
+                              <details key={`bonif-bu-product-${product.id}`} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>Produit: {product.designation}</summary>
+                                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                  <div className="toolbar">
+                                    <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productBonifications.length} bonification(s)</p>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
+                                  </div>
+                                  {productBonifications.map(({ bonification, index }) => (
+                                    <div key={`bonif-bu-product-row-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                      <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
+                                      <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            );
+                          })}
+                          {buGroups.map((group) => {
+                            const groupBonifications = getBonificationsForTarget({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null });
+                            const groupProducts = selectedProductIds
+                              .map((id) => managedProducts.find((product) => product.id === id))
+                              .filter((product): product is CampaignManagedProduct => Boolean(product))
+                              .filter((product) => getCampaignDraftForProduct(product.id).campaign_group_brand_id === group.id);
+                            return (
+                              <details key={`bonif-group-${group.id}`} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>GROUP: {group.name}</summary>
+                                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                  <div className="toolbar">
+                                    <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{groupBonifications.length} bonification(s)</p>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0} onClick={() => openBonificationModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter bonification</Button>
+                                  </div>
+                                  {groupBonifications.map(({ bonification, index }) => (
+                                    <div key={`bonif-group-row-${group.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                      <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
+                                      <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                    </div>
+                                  ))}
+                                  {groupProducts.map((product) => {
+                                    const productBonifications = getBonificationsForTarget({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id });
+                                    return (
+                                      <details key={`bonif-group-product-${product.id}`} style={{ border: '1px dashed #d4d4d8', borderRadius: 10, padding: 10 }}>
+                                        <summary style={{ cursor: 'pointer', fontWeight: 500, color: '#374151' }}>Produit: {product.designation}</summary>
+                                        <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                                          <div className="toolbar">
+                                            <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productBonifications.length} bonification(s)</p>
+                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
+                                          </div>
+                                          {productBonifications.map(({ bonification, index }) => (
+                                            <div key={`bonif-group-product-row-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
+                                              <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
+                                              <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </details>
+                                    );
+                                  })}
+                                </div>
+                              </details>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+                <div className="toolbar" style={{ marginTop: 12 }}>
+                  <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Enregistrez l&apos;ensemble des bonifications pour cette campagne.</p>
+                  <Button variant="secondary" onClick={() => void saveBonificationsStep()} disabled={isSavingBonifications}>{isSavingBonifications ? 'Enregistrement...' : 'Valider les bonifications'}</Button>
                 </div>
               </div>
             </div>
@@ -1758,10 +2091,98 @@ export const CampaignSetupPage = () => {
                   if (hierarchyError) return setConditionModalError(hierarchyError);
                   const row: CampaignCondition = { ...conditionDraft, phase: conditionsPhase, label: '' };
                   row.label = generateConditionLabel(row);
+                  const report = validateConditionCollection([...conditions, row]);
+                  if (report.blocking.length) return setConditionModalError(report.blocking[0]);
                   setConditions((current) => [...current, row]);
                   closeConditionModal();
                 }}>
                   Ajouter la condition
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {bonificationTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+          <Card style={{ width: 'min(620px, 92vw)' }}>
+            <div className="toolbar">
+              <h2 style={{ margin: 0 }}>Ajouter bonification · {bonificationTarget.label}</h2>
+              <Button variant="ghost" onClick={closeBonificationModal}>Fermer</Button>
+            </div>
+            <div className="grid" style={{ gap: 10 }}>
+              {bonificationModalError && (
+                <div style={{ border: '1px solid #fecaca', background: '#fff1f2', color: '#9f1239', borderRadius: 10, padding: '8px 10px', fontSize: 13 }}>
+                  {bonificationModalError}
+                </div>
+              )}
+              <div><label>Libelle</label><Input value={bonificationDraft.label} onChange={(e) => setBonificationDraft((b) => ({ ...b, label: e.target.value }))} /></div>
+              {bonificationDraft.nature !== 'products' ? (
+                <div className="grid grid-2" style={{ gap: 10 }}>
+                  <div><label>Valorisation</label><Select value={bonificationDraft.value_type} onChange={(e) => setBonificationDraft((b) => ({ ...b, value_type: e.target.value as BonificationValueType }))}><option value="percent">%</option><option value="amount">Montant</option></Select></div>
+                  <div><label>Valeur</label><Input type="number" min={0} step="0.001" value={bonificationDraft.value} onChange={(e) => setBonificationDraft((b) => ({ ...b, value: Number(e.target.value || 0) }))} /></div>
+                </div>
+              ) : null}
+              <div><label>Nature</label><Select value={bonificationDraft.nature} onChange={(e) => {
+                const nextNature = e.target.value as BonificationNature;
+                setBonificationDraft((b) => ({
+                  ...b,
+                  nature: nextNature,
+                  cash_mode: nextNature === 'cash' ? (b.cash_mode ?? 'transfer') : null,
+                  buy_qty_threshold: nextNature === 'products' ? (b.buy_qty_threshold ?? 6) : null,
+                  free_qty: nextNature === 'products' ? (b.free_qty ?? 1) : null,
+                  is_repeatable: nextNature === 'products' ? (b.is_repeatable ?? true) : null,
+                }));
+              }}><option value="purchase_voucher">Bons d'achat</option><option value="cash">Argent</option><option value="products">Produits en nature</option></Select></div>
+              {bonificationDraft.nature === 'products' ? (
+                <>
+                  <div className="grid grid-2" style={{ gap: 10 }}>
+                    <div><label>Acheter (X)</label><Input type="number" min={1} step={1} value={bonificationDraft.buy_qty_threshold ?? 6} onChange={(e) => setBonificationDraft((b) => ({ ...b, buy_qty_threshold: Number(e.target.value || 0) }))} /></div>
+                    <div><label>Offert (Y)</label><Input type="number" min={1} step={1} value={bonificationDraft.free_qty ?? 1} onChange={(e) => setBonificationDraft((b) => ({ ...b, free_qty: Number(e.target.value || 0) }))} /></div>
+                  </div>
+                  <div>
+                    <label>Application</label>
+                    <Select value={bonificationDraft.is_repeatable ? 'repeatable' : 'once'} onChange={(e) => setBonificationDraft((b) => ({ ...b, is_repeatable: e.target.value === 'repeatable' }))}>
+                      <option value="repeatable">Repeter la regle (ex: 12+2)</option>
+                      <option value="once">Une seule fois</option>
+                    </Select>
+                  </div>
+                  <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
+                    Apercu: {bonificationDraft.buy_qty_threshold ?? 0}+{bonificationDraft.free_qty ?? 0}
+                  </p>
+                </>
+              ) : null}
+              {bonificationDraft.nature === 'cash' ? (
+                <div>
+                  <label>Mode de paiement</label>
+                  <Select value={bonificationDraft.cash_mode ?? 'transfer'} onChange={(e) => setBonificationDraft((b) => ({ ...b, cash_mode: e.target.value as BonificationCashMode }))}>
+                    <option value="transfer">Virement</option>
+                    <option value="check">Cheque</option>
+                  </Select>
+                </div>
+              ) : null}
+              <div className="toolbar">
+                <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{bonifications.length} bonification(s) au total</p>
+                <Button variant="secondary" onClick={() => {
+                  setBonificationModalError(null);
+                  if (!bonificationDraft.label.trim()) return setBonificationModalError('Le libelle de bonification est obligatoire.');
+                  if (!hasProductsForConditionTarget(bonificationDraft)) return setBonificationModalError('Impossible d\'ajouter une bonification sur un item sans produit.');
+                  if (bonificationDraft.nature !== 'products' && bonificationDraft.value <= 0) return setBonificationModalError('La valeur de la bonification doit etre superieure a 0.');
+                  if (bonificationDraft.nature !== 'products' && bonificationDraft.value_type === 'percent' && bonificationDraft.value > 100) return setBonificationModalError('Une valeur en pourcentage ne peut pas depasser 100%.');
+                  if (bonificationDraft.nature === 'cash' && !bonificationDraft.cash_mode) return setBonificationModalError('Selectionnez le mode de paiement pour la bonification en argent.');
+                  if (bonificationDraft.nature === 'products') {
+                    if (bonificationDraft.scope_type !== 'product') return setBonificationModalError('La gratuite produit est autorisee uniquement au niveau Produit.');
+                    if (!Number.isInteger(bonificationDraft.buy_qty_threshold ?? 0) || (bonificationDraft.buy_qty_threshold ?? 0) <= 0) return setBonificationModalError('Le seuil acheter (X) doit etre un entier strictement positif.');
+                    if (!Number.isInteger(bonificationDraft.free_qty ?? 0) || (bonificationDraft.free_qty ?? 0) <= 0) return setBonificationModalError('La quantite offerte (Y) doit etre un entier strictement positif.');
+                  }
+                  if (hasDuplicateBonificationNatureForTarget(bonificationDraft)) return setBonificationModalError('Cette nature de bonification existe deja pour cet item.');
+                  const row: CampaignBonification = { ...bonificationDraft, label: '' };
+                  row.label = generateBonificationLabel(row);
+                  setBonifications((current) => [...current, row]);
+                  closeBonificationModal();
+                }}>
+                  Ajouter la bonification
                 </Button>
               </div>
             </div>

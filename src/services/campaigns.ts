@@ -1,4 +1,4 @@
-﻿import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export type CampaignStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type CampaignPhaseKey = 'purchase_intentions' | 'purchase_orders' | 'delivery_notes';
@@ -14,6 +14,7 @@ export type CampaignScopeType = 'campaign' | 'business_unit' | 'group_brand' | '
 export type CampaignConditionPhase = 'purchase_intentions' | 'purchase_orders' | 'both';
 export type BonificationValueType = 'percent' | 'amount';
 export type BonificationNature = 'purchase_voucher' | 'cash' | 'products';
+export type BonificationCashMode = 'transfer' | 'check';
 export type CampaignManagedProduct = {
   id: string;
   designation: string;
@@ -52,6 +53,10 @@ export type CampaignBonification = {
   value_type: BonificationValueType;
   value: number;
   nature: BonificationNature;
+  cash_mode: BonificationCashMode | null;
+  buy_qty_threshold: number | null;
+  free_qty: number | null;
+  is_repeatable: boolean | null;
 };
 export type LaboratoryGroupBrand = { id: string; name: string; business_unit_id: string | null };
 
@@ -70,7 +75,7 @@ export type CampaignRow = {
 const formatCampaignTableError = (message: string) => {
   const normalized = message.toLowerCase();
   if (normalized.includes('could not find the table') && normalized.includes('campaign')) {
-    return 'La table Supabase des campagnes est absente (migrations non appliquÃ©es). ExÃ©cutez les migrations puis rechargez la page.';
+    return 'La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.';
   }
   return message;
 };
@@ -189,6 +194,27 @@ export const updateCampaignDetails = async (
 export const updateCampaignStatus = async (campaignId: string, status: CampaignStatus) => {
   const { error } = await supabase.from('campaigns').update({ status }).eq('id', campaignId);
   if (error) throw new Error(formatCampaignTableError(error.message));
+};
+
+export const deleteCampaign = async (campaignId: string) => {
+  const { error } = await supabase.rpc('admin_delete_campaign_if_allowed', {
+    p_campaign_id: campaignId,
+  });
+
+  if (!error) return;
+
+  const message = error.message ?? '';
+  if (message.includes('CAMPAIGN_DELETE_NOT_ALLOWED')) {
+    throw new Error("Suppression impossible: la campagne n'est pas en brouillon et des participants ont déjà postulé.");
+  }
+  if (message.includes('CAMPAIGN_NOT_FOUND')) {
+    throw new Error('Campagne introuvable.');
+  }
+  if (message.includes('FORBIDDEN')) {
+    throw new Error("Vous n'êtes pas autorisé à supprimer cette campagne.");
+  }
+
+  throw new Error(formatCampaignTableError(message));
 };
 
 export const listCampaignPhases = async (campaignId: string): Promise<CampaignPhase[]> => {
@@ -339,6 +365,20 @@ export const saveCampaignProductConfiguration = async (
   }
 };
 
+export const resetCampaignArrangementContainers = async (campaignId: string) => {
+  const { error: deleteGroupsError } = await supabase
+    .from('campaign_group_brands')
+    .delete()
+    .eq('campaign_id', campaignId);
+  if (deleteGroupsError) throw new Error(formatCampaignTableError(deleteGroupsError.message));
+
+  const { error: deleteBusError } = await supabase
+    .from('campaign_business_units')
+    .delete()
+    .eq('campaign_id', campaignId);
+  if (deleteBusError) throw new Error(formatCampaignTableError(deleteBusError.message));
+};
+
 export const listCampaignBusinessUnits = async (campaignId: string): Promise<CampaignBusinessUnit[]> => {
   const { data, error } = await supabase
     .from('campaign_business_units')
@@ -433,10 +473,22 @@ export const saveCampaignConditions = async (campaignId: string, rows: CampaignC
 export const listCampaignBonifications = async (campaignId: string): Promise<CampaignBonification[]> => {
   const { data, error } = await supabase
     .from('campaign_bonifications')
-    .select('id, scope_type, campaign_business_unit_id, campaign_group_brand_id, product_id, label, value_type, value, nature')
+    .select('id, scope_type, campaign_business_unit_id, campaign_group_brand_id, product_id, label, value_type, value, nature, cash_mode, buy_qty_threshold, free_qty, is_repeatable')
     .eq('campaign_id', campaignId)
     .order('created_at', { ascending: true });
-  if (error) throw new Error(formatCampaignTableError(error.message));
+  if (error) {
+    const normalized = error.message.toLowerCase();
+    const missingExtendedColumns = (normalized.includes('cash_mode') || normalized.includes('buy_qty_threshold') || normalized.includes('free_qty') || normalized.includes('is_repeatable'))
+      && (normalized.includes('column') || normalized.includes('schema cache'));
+    if (!missingExtendedColumns) throw new Error(formatCampaignTableError(error.message));
+    const { data: legacyData, error: legacyError } = await supabase
+      .from('campaign_bonifications')
+      .select('id, scope_type, campaign_business_unit_id, campaign_group_brand_id, product_id, label, value_type, value, nature')
+      .eq('campaign_id', campaignId)
+      .order('created_at', { ascending: true });
+    if (legacyError) throw new Error(formatCampaignTableError(legacyError.message));
+    return (legacyData ?? []).map((row) => ({ ...row, cash_mode: null, buy_qty_threshold: null, free_qty: null, is_repeatable: null })) as CampaignBonification[];
+  }
   return (data ?? []) as CampaignBonification[];
 };
 
@@ -444,7 +496,7 @@ export const saveCampaignBonifications = async (campaignId: string, rows: Campai
   const { error: deleteError } = await supabase.from('campaign_bonifications').delete().eq('campaign_id', campaignId);
   if (deleteError) throw new Error(formatCampaignTableError(deleteError.message));
   if (!rows.length) return;
-  const { error } = await supabase.from('campaign_bonifications').insert(rows.map((row) => ({
+  const payload = rows.map((row) => ({
     campaign_id: campaignId,
     scope_type: row.scope_type,
     campaign_business_unit_id: row.campaign_business_unit_id,
@@ -454,6 +506,28 @@ export const saveCampaignBonifications = async (campaignId: string, rows: Campai
     value_type: row.value_type,
     value: row.value,
     nature: row.nature,
-  })));
-  if (error) throw new Error(formatCampaignTableError(error.message));
+    cash_mode: row.nature === 'cash' ? row.cash_mode : null,
+    buy_qty_threshold: row.nature === 'products' ? row.buy_qty_threshold : null,
+    free_qty: row.nature === 'products' ? row.free_qty : null,
+    is_repeatable: row.nature === 'products' ? row.is_repeatable : null,
+  }));
+  const { error } = await supabase.from('campaign_bonifications').insert(payload);
+  if (!error) return;
+  const normalized = error.message.toLowerCase();
+  const missingExtendedColumns = (normalized.includes('cash_mode') || normalized.includes('buy_qty_threshold') || normalized.includes('free_qty') || normalized.includes('is_repeatable'))
+    && (normalized.includes('column') || normalized.includes('schema cache'));
+  if (!missingExtendedColumns) throw new Error(formatCampaignTableError(error.message));
+  const legacyPayload = rows.map((row) => ({
+    campaign_id: campaignId,
+    scope_type: row.scope_type,
+    campaign_business_unit_id: row.campaign_business_unit_id,
+    campaign_group_brand_id: row.campaign_group_brand_id,
+    product_id: row.product_id,
+    label: row.label,
+    value_type: row.value_type,
+    value: row.value,
+    nature: row.nature,
+  }));
+  const { error: legacyError } = await supabase.from('campaign_bonifications').insert(legacyPayload);
+  if (legacyError) throw new Error(formatCampaignTableError(legacyError.message));
 };
