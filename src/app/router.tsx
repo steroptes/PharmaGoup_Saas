@@ -2,10 +2,15 @@ import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { useAuth, roleHomePath } from '@/context/AuthContext';
 import { HomePage } from '@/pages/HomePage';
+import { CampaignsPortalPage } from '@/pages/pharmacy/CampaignsPortalPage';
+import { PharmacyCampaignPhaseFormPage } from '@/pages/pharmacy/CampaignPhaseFormPage';
 import { UploadPage } from '@/pages/pharmacy/UploadPage';
 import { CorrectionPage } from '@/pages/pharmacy/CorrectionPage';
+import { PharmacyProfilePage } from '@/pages/pharmacy/ProfilePage';
+import { PharmacySettingsPage } from '@/pages/pharmacy/SettingsPage';
 import { CampaignsPage } from '@/pages/admin/CampaignsPage';
 import { CampaignSetupPage } from '@/pages/admin/CampaignSetupPage';
+import { CampaignParticipationsPage } from '@/pages/admin/CampaignParticipationsPage';
 import { ReviewPage } from '@/pages/admin/ReviewPage';
 import { GroupagePage } from '@/pages/admin/GroupagePage';
 import { LaboratoriesPage } from '@/pages/admin/LaboratoriesPage';
@@ -90,13 +95,18 @@ export const AppRouter = () => (
         <Route path="/" element={<HomePage />} />
 
         <Route element={<RequireRole role="pharmacy_user" />}>
+          <Route path="/pharmacy/campaigns" element={<CampaignsPortalPage />} />
+          <Route path="/pharmacy/campaigns/:campaignId/form" element={<PharmacyCampaignPhaseFormPage />} />
           <Route path="/pharmacy/upload" element={<UploadPage />} />
           <Route path="/pharmacy/correction" element={<CorrectionPage />} />
+          <Route path="/pharmacy/profile" element={<PharmacyProfilePage />} />
+          <Route path="/pharmacy/settings" element={<PharmacySettingsPage />} />
         </Route>
 
         <Route element={<RequireRole role="admin" />}>
           <Route path="/admin/campaigns" element={<CampaignsPage />} />
           <Route path="/admin/campaigns/:campaignId/setup" element={<CampaignSetupPage />} />
+          <Route path="/admin/campaigns/:campaignId/participations" element={<CampaignParticipationsPage />} />
           <Route path="/admin/review" element={<ReviewPage />} />
           <Route path="/admin/groupage" element={<GroupagePage />} />
           <Route path="/admin/laboratories" element={<LaboratoriesPage />} />

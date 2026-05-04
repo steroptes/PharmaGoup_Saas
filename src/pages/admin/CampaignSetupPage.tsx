@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -36,11 +36,11 @@ import {
   listManagedProductsForLaboratory,
   replaceCampaignParticipants,
   saveCampaignProductConfiguration,
-  resetCampaignArrangementContainers,
   listCampaignConditions,
   saveCampaignConditions,
   listCampaignBonifications,
   saveCampaignBonifications,
+  updateCampaignStatus,
   updateCampaignDetails,
   upsertCampaignPhases,
 } from '@/services/campaigns';
@@ -157,6 +157,12 @@ export const CampaignSetupPage = () => {
   const [moveTargetBuId, setMoveTargetBuId] = useState('');
   const [moveTargetGroupId, setMoveTargetGroupId] = useState('');
   const [phases, setPhases] = useState<CampaignPhase[]>(DEFAULT_PHASES);
+  const [initialPhaseEnablement, setInitialPhaseEnablement] = useState<Record<CampaignPhaseKey, boolean>>({
+    purchase_intentions: false,
+    purchase_orders: false,
+    delivery_notes: true,
+  });
+  const [campaignStatus, setCampaignStatus] = useState<'draft' | 'open' | 'closed' | 'archived'>('draft');
   const [isLoadingDetails, setIsLoadingDetails] = useState(true);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -169,6 +175,7 @@ export const CampaignSetupPage = () => {
   const [bonifications, setBonifications] = useState<CampaignBonification[]>([]);
   const [isSavingConditions, setIsSavingConditions] = useState(false);
   const [isSavingBonifications, setIsSavingBonifications] = useState(false);
+  const [isOpeningCampaign, setIsOpeningCampaign] = useState(false);
   const [conditionsPhase, setConditionsPhase] = useState<CampaignConditionPhase>('both');
   const [conditionTarget, setConditionTarget] = useState<ConditionTarget | null>(null);
   const [conditionModalError, setConditionModalError] = useState<string | null>(null);
@@ -231,6 +238,7 @@ export const CampaignSetupPage = () => {
         setLaboratoryId(campaign.supplier_id ?? '');
         setStartDate(campaign.start_date);
         setEndDate(campaign.end_date);
+        setCampaignStatus(campaign.status);
         setLaboratories(labs);
         setPharmacies(pharmacyRows.filter((item) => item.is_active));
         setSelectedPharmacyIds(participantIds);
@@ -252,14 +260,23 @@ export const CampaignSetupPage = () => {
         setBonifications(bonificationRows);
         if (campaignPhases.length) {
           const byKey = new Map(campaignPhases.map((phase) => [phase.phase_key, phase]));
-          setPhases(
-            DEFAULT_PHASES.map((phase) => ({
+          const mergedPhases = DEFAULT_PHASES.map((phase) => ({
               ...phase,
               ...byKey.get(phase.phase_key),
-            })),
-          );
+            }));
+          setPhases(mergedPhases);
+          setInitialPhaseEnablement({
+            purchase_intentions: mergedPhases.find((phase) => phase.phase_key === 'purchase_intentions')?.is_enabled ?? false,
+            purchase_orders: mergedPhases.find((phase) => phase.phase_key === 'purchase_orders')?.is_enabled ?? false,
+            delivery_notes: mergedPhases.find((phase) => phase.phase_key === 'delivery_notes')?.is_enabled ?? true,
+          });
         } else {
           setPhases(DEFAULT_PHASES);
+          setInitialPhaseEnablement({
+            purchase_intentions: false,
+            purchase_orders: false,
+            delivery_notes: true,
+          });
         }
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : 'Impossible de charger les détails de la campagne.');
@@ -323,12 +340,49 @@ export const CampaignSetupPage = () => {
     void loadProductScope();
   }, [laboratoryId]);
 
+  useEffect(() => {
+    const bootstrapInheritedArrangement = async () => {
+      if (!campaignId || !laboratoryId) return;
+      if (arrangementMode !== 'inherit_laboratory') return;
+      if (!selectedProductIds.length) return;
+
+      const hasMissing = selectedProductIds.some((productId) => !productArrangements[productId]);
+      if (!hasMissing) return;
+
+      try {
+        const inheritLookup = await ensureCampaignContainersFromLaboratory();
+        setProductArrangements((current) => {
+          const next = { ...current };
+          for (const productId of selectedProductIds) {
+            if (next[productId]) continue;
+            const resolved = inheritLookup.arrangementsByProductId.get(productId) ?? {
+              campaign_business_unit_id: null,
+              campaign_group_brand_id: null,
+            };
+            next[productId] = resolved;
+          }
+          return next;
+        });
+      } catch {
+        // no-op: keep manual save flow as fallback if bootstrap fails
+      }
+    };
+
+    void bootstrapInheritedArrangement();
+  }, [campaignId, laboratoryId, arrangementMode, selectedProductIds, productArrangements]);
+
   const saveDetails = async () => {
     if (!campaignId) return;
     if (!name.trim() || !laboratoryId || !startDate || !endDate) return setFeedback('Tous les champs de la section Détails sont obligatoires.');
-    if (endDate < startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
+    if (endDate < startDate) return setFeedback("La date de clôture doit être supérieure ou égale à la date d'ouverture.");
     const deliveryNotesPhase = phases.find((phase) => phase.phase_key === 'delivery_notes');
     if (!deliveryNotesPhase?.is_enabled) return setFeedback('La phase "Collecte des bons de livraisons" est obligatoire.');
+    if (campaignStatus === 'open') {
+      const phaseEnablementChanged = phases.some((phase) => initialPhaseEnablement[phase.phase_key] !== phase.is_enabled);
+      if (phaseEnablementChanged) {
+        return setFeedback("Campagne ouverte: l'activation des phases ne peut plus être modifiée. Seules les périodes et leurs dates restent éditables.");
+      }
+    }
 
     for (const phase of phases) {
       if (!phase.is_enabled) continue;
@@ -358,6 +412,7 @@ export const CampaignSetupPage = () => {
   };
 
   const setPhaseEnabled = (phaseKey: CampaignPhaseKey, checked: boolean) => {
+    if (campaignStatus === 'open') return;
     const isRequired = PHASE_DEFINITIONS.find((phase) => phase.key === phaseKey)?.required ?? false;
     setPhases((current) =>
       current.map((phase) => {
@@ -426,7 +481,7 @@ export const CampaignSetupPage = () => {
       await replaceCampaignParticipants(campaignId, selectedPharmacyIds);
       showToast('Audience enregistrée avec succès.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Enregistrement de l’audience impossible.');
+      setFeedback(error instanceof Error ? error.message : "Enregistrement de l'audience impossible.");
     } finally {
       setIsSavingAudience(false);
     }
@@ -583,15 +638,20 @@ export const CampaignSetupPage = () => {
         arrangementsByProductId: new Map<string, ProductArrangementDraft>(),
       };
     }
+
     const locationMap = buildProductLocationMap();
-    await resetCampaignArrangementContainers(campaignId);
-    const busByName = new Map<string, string>();
-    const groupsByKey = new Map<string, string>();
+    const busByName = new Map<string, string>(
+      businessUnits.map((bu) => [bu.name.toLowerCase(), bu.id]),
+    );
+    const groupsByKey = new Map<string, string>(
+      groupBrands.map((group) => [`${group.campaign_business_unit_id ?? 'root'}::${group.name.toLowerCase()}`, group.id]),
+    );
     const arrangementsByProductId = new Map<string, ProductArrangementDraft>();
 
     for (const productId of selectedProductIds) {
       const location = locationMap.get(productId);
       if (!location) continue;
+
       let campaignBuId: string | null = null;
       if (location.buName) {
         const key = location.buName.toLowerCase();
@@ -613,6 +673,7 @@ export const CampaignSetupPage = () => {
       const currentGroupId = location.groupName
         ? (groupsByKey.get(`${campaignBuId ?? 'root'}::${location.groupName.toLowerCase()}`) ?? null)
         : null;
+
       arrangementsByProductId.set(productId, {
         campaign_business_unit_id: campaignBuId,
         campaign_group_brand_id: currentGroupId,
@@ -656,7 +717,8 @@ export const CampaignSetupPage = () => {
 
       const arrangements: CampaignProductArrangementRow[] = selectedProductIds.map((productId) => {
         if (arrangementMode === 'inherit_laboratory') {
-          const resolved = inheritLookup?.arrangementsByProductId.get(productId) ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
+          const existing = productArrangements[productId];
+          const resolved = existing ?? inheritLookup?.arrangementsByProductId.get(productId) ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
           return {
             product_id: productId,
             campaign_business_unit_id: resolved.campaign_business_unit_id,
@@ -677,6 +739,15 @@ export const CampaignSetupPage = () => {
         arrangementMode,
         arrangements,
       });
+      if (arrangementMode === 'inherit_laboratory') {
+        setProductArrangements((current) => arrangements.reduce<Record<string, ProductArrangementDraft>>((acc, row) => {
+          acc[row.product_id] = {
+            campaign_business_unit_id: row.campaign_business_unit_id,
+            campaign_group_brand_id: row.campaign_group_brand_id,
+          };
+          return acc;
+        }, { ...current }));
+      }
       showToast('Produits de campagne enregistrés avec succès.');
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Enregistrement des produits impossible.');
@@ -772,6 +843,47 @@ export const CampaignSetupPage = () => {
     } finally {
       setIsSavingBonifications(false);
     }
+  };
+
+  const validateCampaign = async () => {
+    if (!campaignId) {
+      setFeedback('Identifiant de campagne introuvable.');
+      return;
+    }
+
+    setIsOpeningCampaign(true);
+    setFeedback(null);
+    try {
+      if (campaignStatus !== 'open') {
+        await updateCampaignStatus(campaignId, 'open');
+        setCampaignStatus('open');
+        showToast('Campagne validee et ouverte avec succes.');
+      } else {
+        showToast('Campagne validee: modifications propagees avec succes.');
+      }
+      navigate('/admin/campaigns');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Validation de campagne impossible.');
+    } finally {
+      setIsOpeningCampaign(false);
+    }
+  };
+
+  const removeInvalidConditions = () => {
+    const invalidIndexes = conditions
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => !hasProductsForConditionTarget(row))
+      .map(({ index }) => index);
+
+    if (!invalidIndexes.length) {
+      setFeedback('Aucune condition invalide à nettoyer.');
+      return;
+    }
+
+    const invalidSet = new Set(invalidIndexes);
+    setConditions((current) => current.filter((_, index) => !invalidSet.has(index)));
+    setFeedback(null);
+    showToast(`${invalidIndexes.length} condition(s) invalide(s) supprimée(s).`);
   };
 
   const currentConditionOptions = CONDITION_KIND_OPTIONS_BY_SCOPE[conditionDraft.scope_type];
@@ -1305,7 +1417,7 @@ export const CampaignSetupPage = () => {
                     }}
                     disabled={isLoadingDetails || isSavingDetails}
                   >
-                    {isEditingDetails ? 'Terminer l’édition' : 'Modifier'}
+                    {isEditingDetails ? "Terminer l'édition" : 'Modifier'}
                   </Button>
                 </div>
                 <div className="grid grid-2" style={{ gap: 14 }}>
@@ -1335,6 +1447,11 @@ export const CampaignSetupPage = () => {
               </div>
               <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
                 <p style={{ marginTop: 0, marginBottom: 12, fontWeight: 600 }}>Phases de la campagne</p>
+                {campaignStatus === 'open' && (
+                  <p style={{ margin: '0 0 12px', color: '#92400e', fontSize: 13 }}>
+                    Campagne ouverte: l&apos;activation des phases est verrouillée. Seules les limitations de période et les dates peuvent être ajustées.
+                  </p>
+                )}
                 <div className="grid" style={{ gap: 10 }}>
                   {PHASE_DEFINITIONS.map((phaseDefinition) => {
                     const phase = phases.find((item) => item.phase_key === phaseDefinition.key) ?? DEFAULT_PHASES.find((item) => item.phase_key === phaseDefinition.key)!;
@@ -1358,7 +1475,7 @@ export const CampaignSetupPage = () => {
                           </div>
                           <Switch
                             checked={phase.is_enabled}
-                            disabled={phaseDefinition.required || !isEditingDetails}
+                            disabled={phaseDefinition.required || !isEditingDetails || campaignStatus === 'open'}
                             onCheckedChange={(checked) => setPhaseEnabled(phaseDefinition.key, checked)}
                           />
                         </div>
@@ -1398,7 +1515,7 @@ export const CampaignSetupPage = () => {
               </div>
               <div className="toolbar" style={{ justifyContent: 'space-between' }}>
                 <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
-                  {isLoadingDetails ? 'Chargement des informations initiales...' : isEditingDetails ? 'Modifiez puis enregistrez les informations.' : 'Cliquez sur Modifier pour activer l’édition.'}
+                  {isLoadingDetails ? 'Chargement des informations initiales...' : isEditingDetails ? 'Modifiez puis enregistrez les informations.' : "Cliquez sur Modifier pour activer l'édition."}
                 </p>
                 <Button variant="secondary" onClick={() => void saveDetails()} disabled={isLoadingDetails || isSavingDetails || !isEditingDetails}>{isSavingDetails ? 'Enregistrement...' : 'Enregistrer les détails'}</Button>
               </div>
@@ -1473,7 +1590,7 @@ export const CampaignSetupPage = () => {
                     Enregistrez la sélection pour mettre à jour les participants de la campagne.
                   </p>
                   <Button variant="secondary" onClick={() => void saveAudience()} disabled={isLoadingDetails || isSavingAudience}>
-                    {isSavingAudience ? 'Enregistrement...' : 'Enregistrer l’audience'}
+                    {isSavingAudience ? 'Enregistrement...' : "Enregistrer l'audience"}
                   </Button>
                 </div>
                 </div>
@@ -1492,7 +1609,7 @@ export const CampaignSetupPage = () => {
               <div style={{ display: 'grid', gap: 6 }}>
                 <h2 style={{ margin: 0 }}>Produits de la campagne</h2>
                 <p style={{ margin: 0, color: '#71717a', fontSize: 14 }}>
-                  Sélectionnez d’abord les produits, puis définissez l’arrangement campagne.
+                  Sélectionnez d'abord les produits, puis définissez l'arrangement campagne.
                 </p>
               </div>
 
@@ -1516,7 +1633,7 @@ export const CampaignSetupPage = () => {
                   </div>
                   <Input placeholder="Rechercher un produit..." value={productSearch} onChange={(event) => setProductSearch(event.target.value)} />
                   <div className="grid" style={{ gap: 10, marginTop: 12, maxHeight: 420, overflow: 'auto', paddingRight: 4 }}>
-                    {!laboratoryId && <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Sélectionnez d’abord un laboratoire dans Généralités.</p>}
+                    {!laboratoryId && <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Sélectionnez d'abord un laboratoire dans Généralités.</p>}
                     {laboratoryId && !filteredProducts.length && <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Aucun produit actif ne correspond à la recherche.</p>}
                     {catalogTree?.business_units.filter(hasVisibleProductsInBu).map((bu) => (
                       <details key={bu.id} open style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: 10 }}>
@@ -1547,10 +1664,10 @@ export const CampaignSetupPage = () => {
               {productsView === 'arrange' && (
                 <>
                   <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
-                    <p style={{ marginTop: 0, marginBottom: 10, fontWeight: 600 }}>Mode d’arrangement</p>
+                    <p style={{ marginTop: 0, marginBottom: 10, fontWeight: 600 }}>Mode d'arrangement</p>
                     <div className="grid" style={{ gap: 10 }}>
                       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: arrangementMode === 'inherit_laboratory' ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '10px 12px', background: arrangementMode === 'inherit_laboratory' ? '#fafafa' : '#fff' }}>
-                        <span style={{ color: '#111827', fontSize: 14 }}>Reprendre l’arrangement du laboratoire</span>
+                        <span style={{ color: '#111827', fontSize: 14 }}>Reprendre l'arrangement du laboratoire</span>
                         <Checkbox checked={arrangementMode === 'inherit_laboratory'} onCheckedChange={() => setArrangementMode('inherit_laboratory')} />
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: arrangementMode === 'custom' ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '10px 12px', background: arrangementMode === 'custom' ? '#fafafa' : '#fff' }}>
@@ -1722,7 +1839,18 @@ export const CampaignSetupPage = () => {
                 </div>
                 {conditionsValidationReport.blocking.length ? (
                   <div style={{ marginBottom: 10, border: '1px solid #fecaca', borderRadius: 12, background: '#fff1f2', padding: '10px 12px' }}>
-                    <p style={{ margin: 0, fontWeight: 700, color: '#9f1239', fontSize: 13 }}>Erreurs bloquantes ({conditionsValidationReport.blocking.length})</p>
+                    <div className="toolbar" style={{ gap: 10 }}>
+                      <p style={{ margin: 0, fontWeight: 700, color: '#9f1239', fontSize: 13 }}>Erreurs bloquantes ({conditionsValidationReport.blocking.length})</p>
+                      {conditionsValidationReport.blocking.some((issue) => issue.includes('COND_ITEM_001')) ? (
+                        <Button
+                          variant="secondary"
+                          onClick={removeInvalidConditions}
+                          style={{ borderColor: '#fca5a5', color: '#9f1239', fontWeight: 700 }}
+                        >
+                          Nettoyer les conditions invalides
+                        </Button>
+                      ) : null}
+                    </div>
                     {conditionsValidationReport.blocking.slice(0, 5).map((issue, idx) => (
                       <p key={`blocking-${idx}`} style={{ margin: idx === 0 ? '6px 0 0' : '4px 0 0', color: '#9f1239', fontSize: 13 }}>{idx + 1}. {issue}</p>
                     ))}
@@ -2032,7 +2160,9 @@ export const CampaignSetupPage = () => {
               ) : (
                 <>
                   <Button variant="secondary" onClick={() => navigate('/admin/campaigns')}>Enregistrer en brouillon</Button>
-                  <Button>Valider et ouvrir</Button>
+                  <Button onClick={() => void validateCampaign()} disabled={isOpeningCampaign}>
+                    {isOpeningCampaign ? 'Validation...' : 'Valider'}
+                  </Button>
                 </>
               )}
             </div>
@@ -2289,3 +2419,10 @@ export const CampaignSetupPage = () => {
     </div>
   );
 };
+
+
+
+
+
+
+

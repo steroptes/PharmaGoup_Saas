@@ -20,7 +20,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-export const roleHomePath = (role: Role) => (role === 'admin' ? '/admin/campaigns' : '/pharmacy/upload');
+export const roleHomePath = (role: Role) => (role === 'admin' ? '/admin/campaigns' : '/pharmacy/campaigns');
 
 const resolveRoleFromUser = (user: User): Role | null => {
   const metadataRole = user.user_metadata?.role ?? user.app_metadata?.role;

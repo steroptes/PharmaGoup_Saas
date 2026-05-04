@@ -7,7 +7,6 @@ import { Input, Select } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from '@/components/ui/table';
 import { CampaignRow, CampaignStatus, createCampaign, deleteCampaign, listCampaigns, updateCampaignStatus } from '@/services/campaigns';
 import { listLaboratories, Laboratory } from '@/services/laboratories';
-import { listPharmacies, Pharmacy } from '@/services/pharmacies';
 
 const EMPTY_FORM = { name: '', laboratoryId: '', startDate: '', endDate: '' };
 
@@ -28,9 +27,8 @@ const PAGE_SIZE = 10;
 export const CampaignsPage = () => {
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
-  const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
-  const [selectedPharmacies, setSelectedPharmacies] = useState<string[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [isNameEditedManually, setIsNameEditedManually] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -39,6 +37,13 @@ export const CampaignsPage = () => {
   const [campaignToDelete, setCampaignToDelete] = useState<CampaignRow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isExtendedFiltersOpen, setIsExtendedFiltersOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | CampaignStatus>('all');
+  const [laboratoryFilter, setLaboratoryFilter] = useState<'all' | string>('all');
+  const [draftStartFromFilter, setDraftStartFromFilter] = useState('');
+  const [draftEndToFilter, setDraftEndToFilter] = useState('');
+  const [startFromFilter, setStartFromFilter] = useState('');
+  const [endToFilter, setEndToFilter] = useState('');
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
 
@@ -46,10 +51,9 @@ export const CampaignsPage = () => {
     setIsLoading(true);
     setFeedback(null);
 
-    const [campaignsResult, laboratoriesResult, pharmaciesResult] = await Promise.allSettled([
+    const [campaignsResult, laboratoriesResult] = await Promise.allSettled([
       listCampaigns(),
       listLaboratories(),
-      listPharmacies(),
     ]);
 
     if (campaignsResult.status === 'fulfilled') {
@@ -66,13 +70,6 @@ export const CampaignsPage = () => {
       setFeedback((current) => current ?? (laboratoriesResult.reason instanceof Error ? laboratoriesResult.reason.message : 'Impossible de charger les laboratoires.'));
     }
 
-    if (pharmaciesResult.status === 'fulfilled') {
-      setPharmacies(pharmaciesResult.value.filter((item) => item.is_active));
-    } else {
-      setPharmacies([]);
-      setFeedback((current) => current ?? (pharmaciesResult.reason instanceof Error ? pharmaciesResult.reason.message : 'Impossible de charger les pharmacies.'));
-    }
-
     setIsLoading(false);
   };
 
@@ -82,13 +79,16 @@ export const CampaignsPage = () => {
 
   const filteredCampaigns = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return campaigns;
-
     return campaigns.filter((campaign) => {
+      if (statusFilter !== 'all' && campaign.status !== statusFilter) return false;
+      if (laboratoryFilter !== 'all' && campaign.supplier_id !== laboratoryFilter) return false;
+      if (startFromFilter && campaign.start_date < startFromFilter) return false;
+      if (endToFilter && campaign.end_date > endToFilter) return false;
+      if (!query) return true;
       const searchable = [campaign.name, campaign.supplier_name ?? '', campaign.status];
       return searchable.some((value) => value.toLowerCase().includes(query));
     });
-  }, [campaigns, searchQuery]);
+  }, [campaigns, searchQuery, statusFilter, laboratoryFilter, startFromFilter, endToFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredCampaigns.length / PAGE_SIZE));
   const paginatedCampaigns = useMemo(() => filteredCampaigns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredCampaigns, page]);
@@ -97,27 +97,31 @@ export const CampaignsPage = () => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
-  const togglePharmacy = (pharmacyId: string) => {
-    setSelectedPharmacies((current) => {
-      if (current.includes(pharmacyId)) {
-        return current.filter((id) => id !== pharmacyId);
-      }
-      return [...current, pharmacyId];
-    });
-  };
-
   const openModal = () => {
     setFeedback(null);
     setForm(EMPTY_FORM);
-    setSelectedPharmacies([]);
+    setIsNameEditedManually(false);
     setIsModalOpen(true);
   };
+
+  useEffect(() => {
+    if (isNameEditedManually) return;
+    const laboratory = laboratories.find((item) => item.id === form.laboratoryId);
+    if (!laboratory || !form.startDate) {
+      setForm((current) => ({ ...current, name: '' }));
+      return;
+    }
+
+    const [year, month] = form.startDate.split('-');
+    if (!year || !month) return;
+    const generatedName = `${laboratory.designation} - ${month} - ${year}`;
+    setForm((current) => ({ ...current, name: generatedName }));
+  }, [form.laboratoryId, form.startDate, form.endDate, laboratories, isNameEditedManually]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form.name.trim() || !form.laboratoryId || !form.startDate || !form.endDate) return setFeedback('Tous les champs de campagne sont obligatoires.');
     if (form.endDate < form.startDate) return setFeedback('La date de clôture doit être supérieure ou égale à la date d’ouverture.');
-    if (!selectedPharmacies.length) return setFeedback('Sélectionnez au moins une pharmacie participante.');
 
     setIsSaving(true);
     try {
@@ -126,7 +130,7 @@ export const CampaignsPage = () => {
         supplier_id: form.laboratoryId,
         start_date: form.startDate,
         end_date: form.endDate,
-        pharmacy_ids: selectedPharmacies,
+        pharmacy_ids: [],
       });
       await loadData();
       setIsModalOpen(false);
@@ -140,6 +144,10 @@ export const CampaignsPage = () => {
 
   const goToSetup = (campaignId: string) => {
     navigate(`/admin/campaigns/${campaignId}/setup`);
+  };
+
+  const goToParticipations = (campaignId: string) => {
+    navigate(`/admin/campaigns/${campaignId}/participations`);
   };
 
   const openDeleteModal = (campaignId: string) => {
@@ -156,6 +164,7 @@ export const CampaignsPage = () => {
 
   const campaignActions = (campaignId: string): DropdownAction[] => ([
     { label: 'Paramétrer', onClick: () => goToSetup(campaignId) },
+    { label: 'Participations', onClick: () => goToParticipations(campaignId) },
     { label: 'Ouvrir', onClick: () => void changeStatus(campaignId, 'open') },
     { label: 'Clôturer', onClick: () => void changeStatus(campaignId, 'closed') },
     { label: 'Archiver', onClick: () => void changeStatus(campaignId, 'archived') },
@@ -199,8 +208,99 @@ export const CampaignsPage = () => {
           <Button onClick={openModal}>Nouvelle campagne</Button>
         </div>
         <div className="toolbar" style={{ marginTop: 12 }}>
-          <Input placeholder="Rechercher une campagne" value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setPage(1); }} />
+          <Input
+            placeholder="Rechercher une campagne"
+            value={searchQuery}
+            onChange={(event) => { setSearchQuery(event.target.value); setPage(1); }}
+            style={{ minWidth: 260, flex: 1 }}
+          />
+          <Button variant="secondary" onClick={() => setIsExtendedFiltersOpen((current) => !current)}>
+            {isExtendedFiltersOpen ? 'Masquer les filtres' : 'Filtres étendus'}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setSearchQuery('');
+              setIsExtendedFiltersOpen(false);
+              setStatusFilter('all');
+              setLaboratoryFilter('all');
+              setDraftStartFromFilter('');
+              setDraftEndToFilter('');
+              setStartFromFilter('');
+              setEndToFilter('');
+              setPage(1);
+            }}
+          >
+            Réinitialiser
+          </Button>
         </div>
+        {isExtendedFiltersOpen && (
+          <div
+            style={{
+              marginTop: 10,
+              border: '1px solid #e4e4e7',
+              borderRadius: 12,
+              padding: 12,
+              display: 'grid',
+              gap: 10,
+              background: '#fafafa',
+            }}
+          >
+            <div className="grid grid-2" style={{ gap: 10 }}>
+              <div>
+                <label>Statut</label>
+                <Select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as 'all' | CampaignStatus); setPage(1); }}>
+                  <option value="all">Tous les statuts</option>
+                  <option value="draft">Brouillon</option>
+                  <option value="open">Ouverte</option>
+                  <option value="closed">Clôturée</option>
+                  <option value="archived">Archivée</option>
+                </Select>
+              </div>
+              <div>
+                <label>Laboratoire</label>
+                <Select value={laboratoryFilter} onChange={(event) => { setLaboratoryFilter(event.target.value); setPage(1); }}>
+                  <option value="all">Tous les laboratoires</option>
+                  {laboratories.map((laboratory) => (
+                    <option key={laboratory.id} value={laboratory.id}>
+                      {laboratory.designation}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-2" style={{ gap: 10 }}>
+              <div>
+                <label>Ouverture à partir du</label>
+                <Input type="date" value={draftStartFromFilter} onChange={(event) => setDraftStartFromFilter(event.target.value)} />
+              </div>
+              <div>
+                <label>Clôture jusqu&apos;au</label>
+                <Input type="date" value={draftEndToFilter} onChange={(event) => setDraftEndToFilter(event.target.value)} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDraftStartFromFilter(startFromFilter);
+                  setDraftEndToFilter(endToFilter);
+                }}
+              >
+                Annuler
+              </Button>
+              <Button
+                onClick={() => {
+                  setStartFromFilter(draftStartFromFilter);
+                  setEndToFilter(draftEndToFilter);
+                  setPage(1);
+                }}
+              >
+                Appliquer les filtres
+              </Button>
+            </div>
+          </div>
+        )}
         {feedback && <p style={{ marginTop: 10 }}>{feedback}</p>}
         {isMissingCampaignSchema(feedback) && (
           <div style={{ marginTop: 8, padding: 12, border: '1px solid #fecaca', background: '#fff1f2', borderRadius: 10 }}>
@@ -214,6 +314,15 @@ export const CampaignsPage = () => {
 
         {!isLoading && (
           <div style={{ overflow: 'auto', marginTop: 12, flex: 1 }}>
+            {campaigns.length === 0 ? (
+              <div style={{ border: '1px dashed #d4d4d8', borderRadius: 12, padding: 16, color: '#52525b' }}>
+                Aucune campagne créée.
+              </div>
+            ) : filteredCampaigns.length === 0 ? (
+              <div style={{ border: '1px dashed #d4d4d8', borderRadius: 12, padding: 16, color: '#52525b' }}>
+                Aucune campagne ne correspond aux filtres.
+              </div>
+            ) : (
             <Table>
               <TableHead>
                 <TableRow>
@@ -242,6 +351,7 @@ export const CampaignsPage = () => {
                 ))}
               </TableBody>
             </Table>
+            )}
           </div>
         )}
 
@@ -264,26 +374,31 @@ export const CampaignsPage = () => {
               <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Fermer</Button>
             </div>
             <form className="grid" onSubmit={handleSubmit}>
-              <Input placeholder="Dénomination" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
               <Select value={form.laboratoryId} onChange={(event) => setForm((current) => ({ ...current, laboratoryId: event.target.value }))} required>
                 <option value="">Sélectionner un laboratoire</option>
                 {laboratories.map((laboratory) => <option key={laboratory.id} value={laboratory.id}>{laboratory.designation}</option>)}
               </Select>
               <div className="grid grid-2">
-                <Input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required />
-                <Input type="date" value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required />
+                <div>
+                  <label>Date de début</label>
+                  <Input type="date" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} required />
+                </div>
+                <div>
+                  <label>Date de fin</label>
+                  <Input type="date" value={form.endDate} onChange={(event) => setForm((current) => ({ ...current, endDate: event.target.value }))} required />
+                </div>
               </div>
               <div>
-                <p>Pharmacies concernées</p>
-                <div className="grid grid-2" style={{ marginTop: 8, gap: 8 }}>
-                  {!pharmacies.length && <p style={{ gridColumn: '1 / -1' }}>Aucune pharmacie active disponible.</p>}
-                  {pharmacies.map((pharmacy) => (
-                    <label key={pharmacy.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input type="checkbox" checked={selectedPharmacies.includes(pharmacy.id)} onChange={() => togglePharmacy(pharmacy.id)} />
-                      {pharmacy.name}
-                    </label>
-                  ))}
-                </div>
+                <label>Dénomination de la campagne</label>
+                <Input
+                  placeholder="Ex: SAIPH - 05 - 2026"
+                  value={form.name}
+                  onChange={(event) => {
+                    setIsNameEditedManually(true);
+                    setForm((current) => ({ ...current, name: event.target.value }));
+                  }}
+                  required
+                />
               </div>
               <Button type="submit" disabled={isSaving}>{isSaving ? 'Création...' : 'Créer en brouillon'}</Button>
             </form>

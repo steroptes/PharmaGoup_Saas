@@ -68,6 +68,33 @@ export const fetchCampaignsForPharmacy = async (
   return (data ?? []).map(({ id, name, supplier_id }) => ({ id, name, supplier_id }));
 };
 
+export const fetchCampaignByIdForPharmacy = async (
+  pharmacyId: string,
+  campaignId: string,
+): Promise<CampaignOption | null> => {
+  const { data: participant, error: participantError } = await supabase
+    .from('campaign_participants')
+    .select('campaign_id, participation_status')
+    .eq('pharmacy_id', pharmacyId)
+    .eq('campaign_id', campaignId)
+    .maybeSingle();
+
+  if (participantError) throw new Error(participantError.message);
+  if (!participant || participant.participation_status !== 'accepted') return null;
+
+  const { data, error } = await supabase
+    .from('campaigns')
+    .select('id, name, supplier_id, status')
+    .eq('id', campaignId)
+    .eq('status', 'open')
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+
+  return { id: data.id as string, name: data.name as string, supplier_id: data.supplier_id as string };
+};
+
 export const submitDeliveryNote = async ({
   uploadedBy,
   pharmacyId,

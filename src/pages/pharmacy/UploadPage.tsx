@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { extractDeliveryNoteFromFile } from '@/services/ocr/tesseractExtractor';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,8 @@ import type { ExtractedDeliveryNote } from '@/types/domain';
 
 export const UploadPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const campaignIdFromQuery = searchParams.get('campaignId');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [result, setResult] = useState<ExtractedDeliveryNote | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,7 @@ export const UploadPage = () => {
       state: {
         extracted: result,
         file: uploadedFile,
+        campaignId: campaignIdFromQuery,
       },
     });
   };

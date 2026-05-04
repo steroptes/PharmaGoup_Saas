@@ -1,4 +1,4 @@
-import { Link, Outlet } from 'react-router-dom';
+﻿import { Link, Outlet } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { Badge } from '@/components/ui/badge';
@@ -12,27 +12,23 @@ export const AppShell = () => {
   }
 
   const isAdmin = user.role === 'admin';
+  const roleLabel = isAdmin ? 'admin' : 'pharmacie';
 
   return (
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-header">
-          <div className="grid">
+          <div className="grid" style={{ width: '100%' }}>
             <h2>PharmaGroup</h2>
-            <p>{user.full_name}</p>
-          </div>
-          <div className="sidebar-role-badge">
-            <Badge>{user.role}</Badge>
+            <div className="sidebar-user-row">
+              <p>{user.full_name}</p>
+              <Badge>{roleLabel}</Badge>
+            </div>
           </div>
         </div>
         <nav>
           <Link to="/">Tableau de bord</Link>
-          {!isAdmin && (
-            <>
-              <Link to="/pharmacy/upload">Téléverser un BL</Link>
-              <Link to="/pharmacy/correction">Correction OCR</Link>
-            </>
-          )}
+          {!isAdmin && <Link to="/pharmacy/campaigns">Mes campagnes</Link>}
           {isAdmin && (
             <>
               <hr className="sidebar-divider" />
@@ -47,18 +43,14 @@ export const AppShell = () => {
           )}
         </nav>
         <div className="sidebar-footer">
-          {isAdmin && (
-            <>
-              <hr className="sidebar-divider" />
-              <Link to="/admin/profile" className="sidebar-settings-link">
-                Gestion du profil
-              </Link>
-              <hr className="sidebar-divider" />
-              <Link to="/admin/settings" className="sidebar-settings-link">
-                Paramètres
-              </Link>
-            </>
-          )}
+          <hr className="sidebar-divider" />
+          <Link to={isAdmin ? '/admin/profile' : '/pharmacy/profile'} className="sidebar-settings-link">
+            Gestion du profil
+          </Link>
+          <hr className="sidebar-divider" />
+          <Link to={isAdmin ? '/admin/settings' : '/pharmacy/settings'} className="sidebar-settings-link">
+            Paramètres
+          </Link>
           <Button
             variant="secondary"
             type="button"

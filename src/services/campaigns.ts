@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+﻿import { supabase } from '@/lib/supabase';
 
 export type CampaignStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type CampaignPhaseKey = 'purchase_intentions' | 'purchase_orders' | 'delivery_notes';
@@ -19,6 +19,7 @@ export type CampaignManagedProduct = {
   id: string;
   designation: string;
   nature: 'medicament' | 'para';
+  purchase_unit_price_ht: number;
   business_unit_id: string | null;
   group_brand_id: string | null;
 };
@@ -76,6 +77,12 @@ const formatCampaignTableError = (message: string) => {
   const normalized = message.toLowerCase();
   if (normalized.includes('could not find the table') && normalized.includes('campaign')) {
     return 'La table Supabase des campagnes est absente (migrations non appliquées). Exécutez les migrations puis rechargez la page.';
+  }
+  if (message.includes('CAMPAIGN_PRODUCT_ARRANGEMENT_LOCKED_ON_OPEN')) {
+    return "Campagne ouverte: l'arrangement des produits est figé et ne peut plus être modifié.";
+  }
+  if (message.includes('CAMPAIGN_PHASE_ENABLEMENT_LOCKED_ON_OPEN')) {
+    return "Campagne ouverte: l'activation des phases est verrouillée. Seules les périodes et leurs dates restent modifiables.";
   }
   return message;
 };
@@ -275,7 +282,7 @@ export const replaceCampaignParticipants = async (campaignId: string, pharmacyId
 export const listManagedProductsForLaboratory = async (laboratoryId: string): Promise<CampaignManagedProduct[]> => {
   const { data, error } = await supabase
     .from('managed_products')
-    .select('id, designation, nature, business_unit_id, group_brand_id')
+    .select('id, designation, nature, purchase_unit_price_ht, business_unit_id, group_brand_id')
     .eq('laboratory_id', laboratoryId)
     .eq('is_active', true)
     .order('designation', { ascending: true });
@@ -531,3 +538,5 @@ export const saveCampaignBonifications = async (campaignId: string, rows: Campai
   const { error: legacyError } = await supabase.from('campaign_bonifications').insert(legacyPayload);
   if (legacyError) throw new Error(formatCampaignTableError(legacyError.message));
 };
+
+

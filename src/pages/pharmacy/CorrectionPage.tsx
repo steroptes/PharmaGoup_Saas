@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
+  fetchCampaignByIdForPharmacy,
   fetchCampaignsForPharmacy,
   fetchSuppliers,
   submitDeliveryNote,
@@ -38,7 +39,7 @@ export const CorrectionPage = () => {
   const location = useLocation();
   const { session, profile } = useAuth();
 
-  const locationState = location.state as { extracted?: ExtractedDeliveryNote; file?: File } | null;
+  const locationState = location.state as { extracted?: ExtractedDeliveryNote; file?: File; campaignId?: string } | null;
 
   const file = locationState?.file ?? null;
   const [header, setHeader] = useState<ExtractedDeliveryNote>(buildDefaultHeader(locationState?.extracted));
@@ -87,6 +88,21 @@ export const CorrectionPage = () => {
         setFeedback(err instanceof Error ? err.message : 'Impossible de charger les campagnes');
       });
   }, [profile?.pharmacy_id, selectedSupplierId]);
+
+  useEffect(() => {
+    const campaignId = locationState?.campaignId;
+    if (!profile?.pharmacy_id || !campaignId) return;
+
+    void fetchCampaignByIdForPharmacy(profile.pharmacy_id, campaignId)
+      .then((campaign) => {
+        if (!campaign) return;
+        setSelectedCampaignId(campaign.id);
+        setSelectedSupplierId((current) => current || campaign.supplier_id);
+      })
+      .catch((err) => {
+        setFeedback(err instanceof Error ? err.message : 'Impossible de pré-sélectionner la campagne.');
+      });
+  }, [locationState?.campaignId, profile?.pharmacy_id]);
 
   const addLine = () => setLines((prev) => [...prev, { ...EMPTY_LINE }]);
 
