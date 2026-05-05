@@ -176,6 +176,7 @@ export const CampaignSetupPage = () => {
   const [isSavingConditions, setIsSavingConditions] = useState(false);
   const [isSavingBonifications, setIsSavingBonifications] = useState(false);
   const [isOpeningCampaign, setIsOpeningCampaign] = useState(false);
+  const [isProductScopeReady, setIsProductScopeReady] = useState(false);
   const [conditionsPhase, setConditionsPhase] = useState<CampaignConditionPhase>('both');
   const [conditionTarget, setConditionTarget] = useState<ConditionTarget | null>(null);
   const [conditionModalError, setConditionModalError] = useState<string | null>(null);
@@ -290,6 +291,7 @@ export const CampaignSetupPage = () => {
 
   const loadProductScopeData = async (targetLaboratoryId: string) => {
     if (!campaignId) return;
+    setIsProductScopeReady(false);
     const [products, labBus, labBrands, tree, campaignBus, campaignBrands] = await Promise.all([
       listManagedProductsForLaboratory(targetLaboratoryId),
       listBusinessUnitsForLaboratory(targetLaboratoryId),
@@ -314,6 +316,7 @@ export const CampaignSetupPage = () => {
       }
       return next;
     });
+    setIsProductScopeReady(true);
   };
 
   useEffect(() => {
@@ -327,6 +330,7 @@ export const CampaignSetupPage = () => {
         setGroupBrands([]);
         setSelectedProductIds([]);
         setProductArrangements({});
+        setIsProductScopeReady(true);
         return;
       }
 
@@ -334,6 +338,7 @@ export const CampaignSetupPage = () => {
         await loadProductScopeData(laboratoryId);
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : 'Impossible de charger les produits du laboratoire.');
+        setIsProductScopeReady(true);
       }
     };
 
@@ -546,8 +551,24 @@ export const CampaignSetupPage = () => {
     }));
   };
 
-  const getCampaignDraftForProduct = (productId: string): ProductArrangementDraft =>
-    productArrangements[productId] ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
+  const getCampaignDraftForProduct = (productId: string): ProductArrangementDraft => {
+    const draft = productArrangements[productId] ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
+    const hasBu = draft.campaign_business_unit_id
+      ? businessUnits.some((item) => item.id === draft.campaign_business_unit_id)
+      : false;
+    const hasGroup = draft.campaign_group_brand_id
+      ? groupBrands.some((item) => item.id === draft.campaign_group_brand_id)
+      : false;
+
+    // If BU/GROUP references no longer exist in campaign containers, treat as unassigned.
+    if (draft.campaign_group_brand_id && !hasGroup) {
+      return { campaign_business_unit_id: null, campaign_group_brand_id: null };
+    }
+    if (draft.campaign_business_unit_id && !hasBu) {
+      return { campaign_business_unit_id: null, campaign_group_brand_id: null };
+    }
+    return draft;
+  };
 
   const arrangedProducts = useMemo(
     () => selectedProductIds
@@ -562,6 +583,9 @@ export const CampaignSetupPage = () => {
   const countProductsInBu = (buId: string) =>
     arrangedProducts.filter((product) => getCampaignDraftForProduct(product.id).campaign_business_unit_id === buId).length;
 
+  const isArrangementLocked = campaignStatus === 'open';
+  const isRulesLocked = campaignStatus === 'open';
+
   const assignableProducts = useMemo(() => {
     const query = assignSearch.trim().toLowerCase();
     return selectedProductIds
@@ -572,7 +596,7 @@ export const CampaignSetupPage = () => {
         return !draft.campaign_business_unit_id && !draft.campaign_group_brand_id;
       })
       .filter((product) => !query || product.designation.toLowerCase().includes(query));
-  }, [assignSearch, selectedProductIds, managedProducts, productArrangements]);
+  }, [assignSearch, selectedProductIds, managedProducts, productArrangements, businessUnits, groupBrands]);
 
   const setProductArrangementBu = (productId: string, businessUnitId: string) => {
     const nextBu = businessUnitId || null;
@@ -690,6 +714,10 @@ export const CampaignSetupPage = () => {
       setFeedback('Veuillez renseigner le laboratoire de la campagne avant de configurer les produits.');
       return;
     }
+    if (isArrangementLocked) {
+      setFeedback("Campagne ouverte et diffusée: l'arrangement des produits est verrouillé et ne peut plus être modifié.");
+      return;
+    }
     if (!selectedProductIds.length) {
       setFeedback('Sélectionnez au moins un produit pour la campagne.');
       return;
@@ -726,7 +754,7 @@ export const CampaignSetupPage = () => {
           };
         }
 
-        const source = productArrangements[productId] ?? { campaign_business_unit_id: null, campaign_group_brand_id: null };
+        const source = getCampaignDraftForProduct(productId);
         return {
           product_id: productId,
           campaign_business_unit_id: source.campaign_business_unit_id,
@@ -811,6 +839,10 @@ export const CampaignSetupPage = () => {
 
   const saveConditionsStep = async () => {
     if (!campaignId) return;
+    if (isRulesLocked) {
+      setFeedback('Campagne ouverte et diffusée: les conditions sont verrouillées et ne peuvent plus être modifiées.');
+      return;
+    }
     if (!conditions.length) return setFeedback('Ajoutez au moins une condition avant validation.');
     const report = validateConditionCollection(conditions);
     if (report.blocking.length) {
@@ -833,6 +865,10 @@ export const CampaignSetupPage = () => {
 
   const saveBonificationsStep = async () => {
     if (!campaignId) return;
+    if (isRulesLocked) {
+      setFeedback('Campagne ouverte et diffusée: les bonifications sont verrouillées et ne peuvent plus être modifiées.');
+      return;
+    }
     setIsSavingBonifications(true);
     setFeedback(null);
     try {
@@ -870,6 +906,10 @@ export const CampaignSetupPage = () => {
   };
 
   const removeInvalidConditions = async () => {
+    if (isRulesLocked) {
+      setFeedback('Campagne ouverte et diffusée: les conditions sont verrouillées et ne peuvent plus être modifiées.');
+      return;
+    }
     const invalidIndexes = conditions
       .map((row, index) => ({ row, index }))
       .filter(({ row }) => {
@@ -918,6 +958,10 @@ export const CampaignSetupPage = () => {
   const currentConditionOption = currentConditionOptions.find((option) => option.value === conditionDraft.condition_kind) ?? currentConditionOptions[0];
   const isPercentConditionDraft = conditionDraft.unit === '%';
   const openConditionModal = (target: ConditionTarget) => {
+    if (isRulesLocked) {
+      setFeedback('Campagne ouverte et diffusée: les conditions sont verrouillées et ne peuvent plus être modifiées.');
+      return;
+    }
     if (!hasProductsForConditionTarget(target)) {
       setFeedback('Impossible d\'ajouter une condition sur un item sans produit.');
       return;
@@ -952,6 +996,10 @@ export const CampaignSetupPage = () => {
   };
 
   const openBonificationModal = (target: BonificationTarget) => {
+    if (isRulesLocked) {
+      setFeedback('Campagne ouverte et diffusée: les bonifications sont verrouillées et ne peuvent plus être modifiées.');
+      return;
+    }
     if (!hasProductsForConditionTarget(target)) {
       setFeedback('Impossible d\'ajouter une bonification sur un item sans produit.');
       return;
@@ -1052,6 +1100,7 @@ export const CampaignSetupPage = () => {
   );
 
   const hasProductsForConditionTarget = (target: Omit<ConditionTarget, 'label'>) => {
+    if (!isProductScopeReady) return true;
     if (target.scope_type === 'campaign') return arrangedProducts.length > 0;
     if (target.scope_type === 'business_unit' && target.campaign_business_unit_id) return countProductsInBu(target.campaign_business_unit_id) > 0;
     if (target.scope_type === 'group_brand' && target.campaign_group_brand_id) return countProductsInGroup(target.campaign_group_brand_id) > 0;
@@ -1693,14 +1742,19 @@ export const CampaignSetupPage = () => {
                 <>
                   <div style={{ border: '1px solid #e4e4e7', borderRadius: 12, padding: 14 }}>
                     <p style={{ marginTop: 0, marginBottom: 10, fontWeight: 600 }}>Mode d'arrangement</p>
+                    {isArrangementLocked && (
+                      <p style={{ margin: '0 0 10px', color: '#92400e', fontSize: 13 }}>
+                        Campagne ouverte et diffusée: le mode d&apos;arrangement et les affectations de produits sont verrouillés.
+                      </p>
+                    )}
                     <div className="grid" style={{ gap: 10 }}>
                       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: arrangementMode === 'inherit_laboratory' ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '10px 12px', background: arrangementMode === 'inherit_laboratory' ? '#fafafa' : '#fff' }}>
                         <span style={{ color: '#111827', fontSize: 14 }}>Reprendre l'arrangement du laboratoire</span>
-                        <Checkbox checked={arrangementMode === 'inherit_laboratory'} onCheckedChange={() => setArrangementMode('inherit_laboratory')} />
+                        <Checkbox checked={arrangementMode === 'inherit_laboratory'} onCheckedChange={() => setArrangementMode('inherit_laboratory')} disabled={isArrangementLocked} />
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: arrangementMode === 'custom' ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '10px 12px', background: arrangementMode === 'custom' ? '#fafafa' : '#fff' }}>
                         <span style={{ color: '#111827', fontSize: 14 }}>Créer un nouvel arrangement (BU / GROUP / PRODUIT)</span>
-                        <Checkbox checked={arrangementMode === 'custom'} onCheckedChange={() => setArrangementMode('custom')} />
+                        <Checkbox checked={arrangementMode === 'custom'} onCheckedChange={() => setArrangementMode('custom')} disabled={isArrangementLocked} />
                       </label>
                     </div>
                   </div>
@@ -1711,8 +1765,8 @@ export const CampaignSetupPage = () => {
                       <div className="toolbar" style={{ marginBottom: 12 }}>
                         <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Créez des conteneurs puis affectez les produits sélectionnés via "Ajouter des produits".</p>
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <Button variant="secondary" onClick={() => setIsCreateBuModalOpen(true)}>Créer BU</Button>
-                          <Button variant="secondary" onClick={() => setIsCreateGroupModalOpen(true)}>Créer GROUP</Button>
+                          <Button variant="secondary" onClick={() => setIsCreateBuModalOpen(true)} disabled={isArrangementLocked}>Créer BU</Button>
+                          <Button variant="secondary" onClick={() => setIsCreateGroupModalOpen(true)} disabled={isArrangementLocked}>Créer GROUP</Button>
                         </div>
                       </div>
                       <div className="grid" style={{ gap: 10 }}>
@@ -1731,14 +1785,14 @@ export const CampaignSetupPage = () => {
                               <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                 <div className="toolbar">
                                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{rootProducts.length} produit(s) à la racine</p>
-                                  <Button variant="secondary" onClick={() => openAssignModal({ buId: null, groupId: null, label: 'Racine campagne' })}>Ajouter des produits</Button>
+                                  <Button variant="secondary" onClick={() => openAssignModal({ buId: null, groupId: null, label: 'Racine campagne' })} disabled={isArrangementLocked}>Ajouter des produits</Button>
                                 </div>
                                 {rootProducts.map((product) => (
                                   <div key={product.id} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                     <p style={{ margin: 0, fontSize: 14 }}>{product.designation}</p>
                                     <div style={{ display: 'flex', gap: 8 }}>
-                                      <Button variant="ghost" onClick={() => openMoveModal(product.id)}>Déplacer</Button>
-                                      <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)}>Retirer</Button>
+                                      <Button variant="ghost" onClick={() => openMoveModal(product.id)} disabled={isArrangementLocked}>Déplacer</Button>
+                                      <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)} disabled={isArrangementLocked}>Retirer</Button>
                                     </div>
                                   </div>
                                 ))}
@@ -1763,16 +1817,16 @@ export const CampaignSetupPage = () => {
                                 <div className="toolbar">
                                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{buProducts.length} produit(s) au niveau BU</p>
                                   <div style={{ display: 'flex', gap: 8 }}>
-                                    <Button variant="secondary" onClick={() => openAssignModal({ buId: bu.id, groupId: null, label: `BU ${bu.name}` })}>Ajouter des produits</Button>
-                                    <Button variant="ghost" onClick={() => void removeBu(bu.id)}>Supprimer</Button>
+                                    <Button variant="secondary" onClick={() => openAssignModal({ buId: bu.id, groupId: null, label: `BU ${bu.name}` })} disabled={isArrangementLocked}>Ajouter des produits</Button>
+                                    <Button variant="ghost" onClick={() => void removeBu(bu.id)} disabled={isArrangementLocked}>Supprimer</Button>
                                   </div>
                                 </div>
                                 {buProducts.map((product) => (
                                   <div key={product.id} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                     <p style={{ margin: 0, fontSize: 14 }}>{product.designation}</p>
                                     <div style={{ display: 'flex', gap: 8 }}>
-                                      <Button variant="ghost" onClick={() => openMoveModal(product.id)}>Déplacer</Button>
-                                      <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)}>Retirer</Button>
+                                      <Button variant="ghost" onClick={() => openMoveModal(product.id)} disabled={isArrangementLocked}>Déplacer</Button>
+                                      <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)} disabled={isArrangementLocked}>Retirer</Button>
                                     </div>
                                   </div>
                                 ))}
@@ -1788,16 +1842,16 @@ export const CampaignSetupPage = () => {
                                         <div className="toolbar">
                                           <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{groupProducts.length} produit(s)</p>
                                           <div style={{ display: 'flex', gap: 8 }}>
-                                            <Button variant="secondary" onClick={() => openAssignModal({ buId: bu.id, groupId: group.id, label: `GROUP ${group.name}` })}>Ajouter des produits</Button>
-                                            <Button variant="ghost" onClick={() => void removeGroup(group.id)}>Supprimer</Button>
+                                            <Button variant="secondary" onClick={() => openAssignModal({ buId: bu.id, groupId: group.id, label: `GROUP ${group.name}` })} disabled={isArrangementLocked}>Ajouter des produits</Button>
+                                            <Button variant="ghost" onClick={() => void removeGroup(group.id)} disabled={isArrangementLocked}>Supprimer</Button>
                                           </div>
                                         </div>
                                         {groupProducts.map((product) => (
                                           <div key={product.id} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                             <p style={{ margin: 0, fontSize: 14 }}>{product.designation}</p>
                                             <div style={{ display: 'flex', gap: 8 }}>
-                                              <Button variant="ghost" onClick={() => openMoveModal(product.id)}>Déplacer</Button>
-                                              <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)}>Retirer</Button>
+                                              <Button variant="ghost" onClick={() => openMoveModal(product.id)} disabled={isArrangementLocked}>Déplacer</Button>
+                                              <Button variant="ghost" onClick={() => removeProductFromContainer(product.id)} disabled={isArrangementLocked}>Retirer</Button>
                                             </div>
                                           </div>
                                         ))}
@@ -1819,7 +1873,7 @@ export const CampaignSetupPage = () => {
                 <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
                   Enregistrez la sélection des produits et leur arrangement pour cette campagne.
                 </p>
-                <Button variant="secondary" onClick={() => void saveProducts()} disabled={isLoadingDetails || isSavingProducts || !laboratoryId}>
+                <Button variant="secondary" onClick={() => void saveProducts()} disabled={isLoadingDetails || isSavingProducts || !laboratoryId || isArrangementLocked}>
                   {isSavingProducts ? 'Enregistrement...' : 'Enregistrer les produits'}
                 </Button>
               </div>
@@ -1851,9 +1905,16 @@ export const CampaignSetupPage = () => {
                 </p>
               </div>
               <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                {isRulesLocked && (
+                  <div style={{ marginBottom: 10, border: '1px solid #fcd34d', borderRadius: 12, background: '#fffbeb', padding: '10px 12px' }}>
+                    <p style={{ margin: 0, fontWeight: 700, color: '#92400e', fontSize: 13 }}>
+                      Campagne ouverte et diffusée: les conditions sont verrouillées et ne peuvent plus être modifiées.
+                    </p>
+                  </div>
+                )}
                 <div style={{ marginBottom: 10 }}>
                   <label>Phase appliquée à toutes les conditions</label>
-                  <Select value={conditionsPhase} onChange={(e) => setConditionsPhase(e.target.value as CampaignConditionPhase)}>
+                  <Select value={conditionsPhase} onChange={(e) => setConditionsPhase(e.target.value as CampaignConditionPhase)} disabled={isRulesLocked}>
                     <option value="both">Intentions + BC</option>
                     <option value="purchase_intentions">Intentions</option>
                     <option value="purchase_orders">BC</option>
@@ -1873,6 +1934,7 @@ export const CampaignSetupPage = () => {
                         <Button
                           variant="secondary"
                           onClick={removeInvalidConditions}
+                          disabled={isRulesLocked}
                           style={{ borderColor: '#fca5a5', color: '#9f1239', fontWeight: 700 }}
                         >
                           Nettoyer les conditions invalides
@@ -1900,14 +1962,14 @@ export const CampaignSetupPage = () => {
                         <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
                           {getConditionsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).length} condition(s)
                         </p>
-                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length} onClick={() => openConditionModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>
+                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length || isRulesLocked} onClick={() => openConditionModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>
                           Ajouter condition
                         </Button>
                       </div>
                       {getConditionsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).map(({ condition, index }) => (
                         <div key={`campaign-condition-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                           <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                          <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                          <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                         </div>
                       ))}
 
@@ -1926,12 +1988,12 @@ export const CampaignSetupPage = () => {
                               <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                 <div className="toolbar">
                                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
-                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={isRulesLocked} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
                                 </div>
                                 {productConditions.map(({ condition, index }) => (
                                   <div key={`root-product-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                     <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                                    <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                    <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                   </div>
                                 ))}
                               </div>
@@ -1958,12 +2020,12 @@ export const CampaignSetupPage = () => {
                         <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                           <div className="toolbar">
                             <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{buConditions.length} condition(s)</p>
-                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0} onClick={() => openConditionModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter condition</Button>
+                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0 || isRulesLocked} onClick={() => openConditionModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter condition</Button>
                           </div>
                           {buConditions.map(({ condition, index }) => (
                             <div key={`bu-condition-${bu.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                               <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                              <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                              <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                             </div>
                           ))}
 
@@ -1975,12 +2037,12 @@ export const CampaignSetupPage = () => {
                                 <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                   <div className="toolbar">
                                     <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
-                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={isRulesLocked} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
                                   </div>
                                   {productConditions.map(({ condition, index }) => (
                                     <div key={`product-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                       <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                                      <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                      <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                     </div>
                                   ))}
                                 </div>
@@ -2001,12 +2063,12 @@ export const CampaignSetupPage = () => {
                                 <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                   <div className="toolbar">
                                     <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{groupConditions.length} condition(s)</p>
-                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0} onClick={() => openConditionModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter condition</Button>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0 || isRulesLocked} onClick={() => openConditionModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter condition</Button>
                                   </div>
                                   {groupConditions.map(({ condition, index }) => (
                                     <div key={`group-condition-${group.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                       <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                                      <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                      <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                     </div>
                                   ))}
 
@@ -2018,12 +2080,12 @@ export const CampaignSetupPage = () => {
                                         <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                           <div className="toolbar">
                                             <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productConditions.length} condition(s)</p>
-                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
+                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={isRulesLocked} onClick={() => openConditionModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter condition</Button>
                                           </div>
                                           {productConditions.map(({ condition, index }) => (
                                             <div key={`product-group-condition-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                               <p style={{ margin: 0, fontSize: 14 }}>{condition.label}</p>
-                                              <Button variant="ghost" onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                              <Button variant="ghost" disabled={isRulesLocked} onClick={() => setConditions((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                             </div>
                                           ))}
                                         </div>
@@ -2043,7 +2105,7 @@ export const CampaignSetupPage = () => {
                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>
                     Enregistrez l&apos;ensemble des conditions pour cette campagne.
                   </p>
-                  <Button variant="secondary" onClick={() => void saveConditionsStep()} disabled={isSavingConditions}>{isSavingConditions ? 'Enregistrement...' : 'Valider les conditions'}</Button>
+                  <Button variant="secondary" onClick={() => void saveConditionsStep()} disabled={isSavingConditions || isRulesLocked}>{isSavingConditions ? 'Enregistrement...' : 'Valider les conditions'}</Button>
                 </div>
               </div>
             </div>
@@ -2058,6 +2120,13 @@ export const CampaignSetupPage = () => {
                 </p>
               </div>
               <div style={{ border: '1px solid #86efac', borderRadius: 14, padding: 14, background: 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 45%)' }}>
+                {isRulesLocked && (
+                  <div style={{ marginBottom: 10, border: '1px solid #fcd34d', borderRadius: 12, background: '#fffbeb', padding: '10px 12px' }}>
+                    <p style={{ margin: 0, fontWeight: 700, color: '#92400e', fontSize: 13 }}>
+                      Campagne ouverte et diffusée: les bonifications sont verrouillées et ne peuvent plus être modifiées.
+                    </p>
+                  </div>
+                )}
                 <div style={{ marginBottom: 10, border: '1px solid #bbf7d0', borderRadius: 12, background: '#f7fee7', padding: '10px 12px' }}>
                   <p style={{ margin: 0, fontWeight: 700, color: '#166534', fontSize: 13 }}>Regles d&apos;integrite</p>
                   <p style={{ margin: '6px 0 0', color: '#365314', fontSize: 13 }}>1. Un item sans produit ne peut pas recevoir de bonification.</p>
@@ -2069,12 +2138,12 @@ export const CampaignSetupPage = () => {
                     <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                       <div className="toolbar">
                         <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{getBonificationsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).length} bonification(s)</p>
-                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length} onClick={() => openBonificationModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>Ajouter bonification</Button>
+                        <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={!arrangedProducts.length || isRulesLocked} onClick={() => openBonificationModal({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null, label: 'Racine campagne' })}>Ajouter bonification</Button>
                       </div>
                       {getBonificationsForTarget({ scope_type: 'campaign', campaign_business_unit_id: null, campaign_group_brand_id: null, product_id: null }).map(({ bonification, index }) => (
                         <div key={`campaign-bonification-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                           <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
-                          <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                          <Button variant="ghost" disabled={isRulesLocked} onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                         </div>
                       ))}
                     </div>
@@ -2095,12 +2164,12 @@ export const CampaignSetupPage = () => {
                         <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                           <div className="toolbar">
                             <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{buBonifications.length} bonification(s)</p>
-                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0} onClick={() => openBonificationModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter bonification</Button>
+                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInBu(bu.id) === 0 || isRulesLocked} onClick={() => openBonificationModal({ scope_type: 'business_unit', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: null, label: `BU ${bu.name}` })}>Ajouter bonification</Button>
                           </div>
                           {buBonifications.map(({ bonification, index }) => (
                             <div key={`bonif-bu-row-${bu.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                               <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
-                              <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                              <Button variant="ghost" disabled={isRulesLocked} onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                             </div>
                           ))}
                           {buProducts.map((product) => {
@@ -2111,12 +2180,12 @@ export const CampaignSetupPage = () => {
                                 <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                   <div className="toolbar">
                                     <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productBonifications.length} bonification(s)</p>
-                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={isRulesLocked} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: null, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
                                   </div>
                                   {productBonifications.map(({ bonification, index }) => (
                                     <div key={`bonif-bu-product-row-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                       <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
-                                      <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                      <Button variant="ghost" disabled={isRulesLocked} onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                     </div>
                                   ))}
                                 </div>
@@ -2135,12 +2204,12 @@ export const CampaignSetupPage = () => {
                                 <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                   <div className="toolbar">
                                     <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{groupBonifications.length} bonification(s)</p>
-                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0} onClick={() => openBonificationModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter bonification</Button>
+                                    <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={countProductsInGroup(group.id) === 0 || isRulesLocked} onClick={() => openBonificationModal({ scope_type: 'group_brand', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: null, label: `GROUP ${group.name}` })}>Ajouter bonification</Button>
                                   </div>
                                   {groupBonifications.map(({ bonification, index }) => (
                                     <div key={`bonif-group-row-${group.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                       <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
-                                      <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                      <Button variant="ghost" disabled={isRulesLocked} onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                     </div>
                                   ))}
                                   {groupProducts.map((product) => {
@@ -2151,12 +2220,12 @@ export const CampaignSetupPage = () => {
                                         <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                                           <div className="toolbar">
                                             <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{productBonifications.length} bonification(s)</p>
-                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
+                                            <Button variant="default" style={{ background: '#16a34a', borderColor: '#15803d' }} disabled={isRulesLocked} onClick={() => openBonificationModal({ scope_type: 'product', campaign_business_unit_id: bu.id, campaign_group_brand_id: group.id, product_id: product.id, label: `Produit ${product.designation}` })}>Ajouter bonification</Button>
                                           </div>
                                           {productBonifications.map(({ bonification, index }) => (
                                             <div key={`bonif-group-product-row-${product.id}-${index}`} className="toolbar" style={{ border: '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px' }}>
                                               <p style={{ margin: 0, fontSize: 14 }}>{bonification.label}</p>
-                                              <Button variant="ghost" onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
+                                              <Button variant="ghost" disabled={isRulesLocked} onClick={() => setBonifications((current) => current.filter((_, i) => i !== index))}>Supprimer</Button>
                                             </div>
                                           ))}
                                         </div>
@@ -2174,7 +2243,7 @@ export const CampaignSetupPage = () => {
                 </div>
                 <div className="toolbar" style={{ marginTop: 12 }}>
                   <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>Enregistrez l&apos;ensemble des bonifications pour cette campagne.</p>
-                  <Button variant="secondary" onClick={() => void saveBonificationsStep()} disabled={isSavingBonifications}>{isSavingBonifications ? 'Enregistrement...' : 'Valider les bonifications'}</Button>
+                  <Button variant="secondary" onClick={() => void saveBonificationsStep()} disabled={isSavingBonifications || isRulesLocked}>{isSavingBonifications ? 'Enregistrement...' : 'Valider les bonifications'}</Button>
                 </div>
               </div>
             </div>
@@ -2233,7 +2302,7 @@ export const CampaignSetupPage = () => {
               </div>
               <div className="toolbar">
                 <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{conditions.length} condition(s) au total</p>
-                <Button variant="secondary" onClick={() => {
+                <Button variant="secondary" disabled={isRulesLocked} onClick={() => {
                   setConditionModalError(null);
                   if (!hasProductsForConditionTarget(conditionDraft)) {
                     return setConditionModalError('Impossible d\'ajouter une condition sur un item sans produit.');
@@ -2322,7 +2391,7 @@ export const CampaignSetupPage = () => {
               ) : null}
               <div className="toolbar">
                 <p style={{ margin: 0, color: '#667085', fontSize: 13 }}>{bonifications.length} bonification(s) au total</p>
-                <Button variant="secondary" onClick={() => {
+                <Button variant="secondary" disabled={isRulesLocked} onClick={() => {
                   setBonificationModalError(null);
                   if (!bonificationDraft.label.trim()) return setBonificationModalError('Le libelle de bonification est obligatoire.');
                   if (!hasProductsForConditionTarget(bonificationDraft)) return setBonificationModalError('Impossible d\'ajouter une bonification sur un item sans produit.');

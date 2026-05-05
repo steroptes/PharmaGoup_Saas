@@ -20,6 +20,7 @@ export type CampaignManagedProduct = {
   designation: string;
   nature: 'medicament' | 'para';
   purchase_unit_price_ht: number;
+  vat_rate: number;
   business_unit_id: string | null;
   group_brand_id: string | null;
 };
@@ -283,13 +284,32 @@ export const replaceCampaignParticipants = async (campaignId: string, pharmacyId
 export const listManagedProductsForLaboratory = async (laboratoryId: string): Promise<CampaignManagedProduct[]> => {
   const { data, error } = await supabase
     .from('managed_products')
-    .select('id, designation, nature, purchase_unit_price_ht, business_unit_id, group_brand_id')
+    .select('id, designation, nature, purchase_unit_price_ht, vat_rate_id, business_unit_id, group_brand_id')
     .eq('laboratory_id', laboratoryId)
     .eq('is_active', true)
     .order('designation', { ascending: true });
 
   if (error) throw new Error(formatCampaignTableError(error.message));
-  return (data ?? []) as CampaignManagedProduct[];
+  const vatRateIds = Array.from(new Set((data ?? []).map((row: any) => row.vat_rate_id).filter(Boolean)));
+  let vatRateMap = new Map<string, number>();
+  if (vatRateIds.length) {
+    const { data: vatRates, error: vatError } = await supabase
+      .from('vat_rates')
+      .select('id, rate')
+      .in('id', vatRateIds);
+    if (vatError) throw new Error(formatCampaignTableError(vatError.message));
+    vatRateMap = new Map((vatRates ?? []).map((row: any) => [row.id as string, Number(row.rate ?? 0)]));
+  }
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id as string,
+    designation: row.designation as string,
+    nature: row.nature as 'medicament' | 'para',
+    purchase_unit_price_ht: Number(row.purchase_unit_price_ht ?? 0),
+    vat_rate: vatRateMap.get(row.vat_rate_id as string) ?? 0,
+    business_unit_id: (row.business_unit_id as string | null) ?? null,
+    group_brand_id: (row.group_brand_id as string | null) ?? null,
+  }));
 };
 
 export const listBusinessUnitsForLaboratory = async (laboratoryId: string): Promise<CampaignBusinessUnit[]> => {

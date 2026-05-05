@@ -13,6 +13,7 @@ import type { DeliveryNoteLineInput, ExtractedDeliveryNote } from '@/types/domai
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/input';
+import { loadCampaignDynamicForm } from '@/services/campaignParticipationForms';
 
 const EMPTY_LINE: DeliveryNoteLineInput = {
   product_code: '',
@@ -52,6 +53,7 @@ export const CorrectionPage = () => {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [campaignScope, setCampaignScope] = useState<Awaited<ReturnType<typeof loadCampaignDynamicForm>> | null>(null);
 
   useEffect(() => {
     void fetchSuppliers()
@@ -104,6 +106,17 @@ export const CorrectionPage = () => {
       });
   }, [locationState?.campaignId, profile?.pharmacy_id]);
 
+  useEffect(() => {
+    if (!selectedCampaignId || !profile?.pharmacy_id) {
+      setCampaignScope(null);
+      return;
+    }
+
+    void loadCampaignDynamicForm(selectedCampaignId, 'delivery_notes', profile.pharmacy_id)
+      .then(setCampaignScope)
+      .catch(() => setCampaignScope(null));
+  }, [selectedCampaignId, profile?.pharmacy_id]);
+
   const addLine = () => setLines((prev) => [...prev, { ...EMPTY_LINE }]);
 
   const removeLine = (index: number) => {
@@ -127,6 +140,27 @@ export const CorrectionPage = () => {
   };
 
   const totalLines = useMemo(() => lines.reduce((acc, line) => acc + line.subtotal, 0), [lines]);
+
+  const campaignScopeNames = useMemo(() => {
+    if (!campaignScope) return new Set<string>();
+    const names = new Set<string>();
+    for (const product of campaignScope.root_products) names.add(product.designation.trim().toLowerCase());
+    for (const bu of campaignScope.business_units) {
+      for (const group of bu.groups) {
+        for (const product of group.products) names.add(product.designation.trim().toLowerCase());
+      }
+    }
+    return names;
+  }, [campaignScope]);
+
+  const outOfScopeLines = useMemo(() => {
+    if (!campaignScope || campaignScopeNames.size === 0) return [] as DeliveryNoteLineInput[];
+    return lines.filter((line) => {
+      const key = line.designation.trim().toLowerCase();
+      if (!key) return false;
+      return !campaignScopeNames.has(key);
+    });
+  }, [campaignScope, campaignScopeNames, lines]);
 
   const submit = async () => {
     if (!session?.user?.id || !profile?.pharmacy_id) {
@@ -181,7 +215,7 @@ export const CorrectionPage = () => {
 
   return (
     <div className="grid">
-      <Card>
+      <Card className="phase-hero">
         <h1>Correction post-OCR</h1>
         <p>Corrigez l'entête et les lignes détectées, puis validez l'enregistrement en base.</p>
       </Card>
@@ -259,7 +293,7 @@ export const CorrectionPage = () => {
           <Button variant="secondary" type="button" onClick={addLine}>Ajouter ligne</Button>
         </div>
 
-        <table className="table">
+        <table className="table bl-table">
           <thead>
             <tr>
               <th>Code</th>
@@ -284,8 +318,21 @@ export const CorrectionPage = () => {
           </tbody>
         </table>
 
-        <p><b>Total HT lignes:</b> {totalLines.toFixed(2)}</p>
-        <div className="actions">
+        <div className="bl-total">
+          <p><b>Total HT lignes:</b> {totalLines.toFixed(2)}</p>
+          <span className={`status-pill ${outOfScopeLines.length ? 'warn' : 'ok'}`}>
+            {outOfScopeLines.length ? `${outOfScopeLines.length} ligne(s) hors perimetre` : 'Perimetre conforme'}
+          </span>
+        </div>
+        {!!outOfScopeLines.length && (
+          <div style={{ marginTop: 8, border: '1px solid #fdba74', background: '#fff7ed', borderRadius: 10, padding: 10 }}>
+            <p style={{ margin: 0, fontWeight: 600 }}>Attention: {outOfScopeLines.length} ligne(s) hors perimetre produits de la campagne.</p>
+            {outOfScopeLines.slice(0, 5).map((line, index) => (
+              <p key={`${line.designation}-${index}`} style={{ margin: '4px 0 0 0', fontSize: 13 }}>{line.designation}</p>
+            ))}
+          </div>
+        )}
+        <div className="actions sticky-actions" style={{ padding: 12, borderRadius: 12 }}>
           <Button variant="secondary" type="button" onClick={() => navigate('/pharmacy/upload')}>Revenir au téléversement</Button>
           <Button type="button" onClick={submit} disabled={saving}>{saving ? 'Enregistrement...' : 'Valider et enregistrer le BL'}</Button>
         </div>

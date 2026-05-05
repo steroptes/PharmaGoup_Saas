@@ -15,6 +15,7 @@ export type PharmacyCampaignSummary = {
   participation_decided_at: string | null;
   enabled_phases: PharmacyCampaignPhaseKey[];
   phase_windows: Partial<Record<PharmacyCampaignPhaseKey, { has_period_limit: boolean; start_date: string | null; end_date: string | null }>>;
+  phase_submission_statuses: Partial<Record<PharmacyCampaignPhaseKey, 'draft' | 'submitted' | 'needs_correction' | 'accepted'>>;
 };
 
 const buildSupplierMap = async () => {
@@ -55,6 +56,7 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
       participation_decided_at: (row.participation_decided_at as string | null) ?? null,
       enabled_phases: ((row.enabled_phases as PharmacyCampaignPhaseKey[] | null) ?? []),
       phase_windows: (row.phase_windows as PharmacyCampaignSummary['phase_windows'] | null) ?? {},
+      phase_submission_statuses: {},
     }));
   }
 
@@ -68,7 +70,7 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
   const campaignIds = (participantRows ?? []).map((row) => row.campaign_id as string);
   if (!campaignIds.length) return [];
 
-  const [{ data: campaigns, error: campaignsError }, { data: phases, error: phasesError }, supplierMap] = await Promise.all([
+  const [{ data: campaigns, error: campaignsError }, { data: phases, error: phasesError }, { data: submissions, error: submissionsError }, supplierMap] = await Promise.all([
     supabase
       .from('campaigns')
       .select('id, name, status, supplier_id, start_date, end_date')
@@ -79,6 +81,11 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
       .from('campaign_phases')
       .select('campaign_id, phase_key, is_enabled')
       .in('campaign_id', campaignIds),
+    supabase
+      .from('campaign_phase_submissions')
+      .select('campaign_id, phase_key, status')
+      .in('campaign_id', campaignIds)
+      .eq('pharmacy_id', pharmacyId),
     buildSupplierMap(),
   ]);
 
@@ -88,6 +95,7 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
     || normalizedPhasesError.includes('row-level security')
     || normalizedPhasesError.includes('does not exist');
   if (phasesError && !canIgnorePhasesError) throw new Error(phasesError.message);
+  if (submissionsError) throw new Error(submissionsError.message);
 
   const phaseMap = new Map<string, PharmacyCampaignPhaseKey[]>();
   for (const row of (phasesError ? [] : phases) ?? []) {
@@ -105,6 +113,14 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
     });
   }
 
+  const submissionMap = new Map<string, PharmacyCampaignSummary['phase_submission_statuses']>();
+  for (const row of submissions ?? []) {
+    const campaignKey = row.campaign_id as string;
+    const phaseStatuses = submissionMap.get(campaignKey) ?? {};
+    phaseStatuses[row.phase_key as PharmacyCampaignPhaseKey] = row.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted';
+    submissionMap.set(campaignKey, phaseStatuses);
+  }
+
   return (campaigns ?? []).map((campaign) => {
     const participant = participantMap.get(campaign.id as string);
     return {
@@ -119,6 +135,7 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
       participation_decided_at: participant?.decidedAt ?? null,
       enabled_phases: phaseMap.get(campaign.id as string) ?? [],
       phase_windows: {},
+      phase_submission_statuses: submissionMap.get(campaign.id as string) ?? {},
     };
   });
 };

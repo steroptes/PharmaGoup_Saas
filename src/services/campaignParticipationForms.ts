@@ -3,9 +3,11 @@ import {
   CampaignCondition,
   CampaignPhaseKey,
   getCampaignProductConfiguration,
+  listBusinessUnitsForLaboratory,
   listCampaignBusinessUnits,
   listCampaignConditions,
   listCampaignGroupBrands,
+  listGroupBrandsForLaboratory,
   listManagedProductsForLaboratory,
 } from '@/services/campaigns';
 import { listCampaignsForPharmacyPortal, resolveCurrentUserPharmacyId } from '@/services/pharmacyCampaigns';
@@ -14,6 +16,7 @@ export type CampaignDynamicProductRow = {
   product_id: string;
   designation: string;
   unit_price_ht: number;
+  vat_rate: number;
   quantity: number;
   campaign_business_unit_id: string | null;
   campaign_group_brand_id: string | null;
@@ -40,15 +43,16 @@ export type CampaignDynamicFormPayload = {
   business_units: CampaignDynamicBu[];
   root_products: CampaignDynamicProductRow[];
   conditions: CampaignCondition[];
-  submission_status: 'draft' | 'submitted' | null;
+  submission_status: 'draft' | 'submitted' | 'needs_correction' | 'accepted' | null;
   submission_updated_at: string | null;
+  admin_correction_note: string | null;
 };
 
 export type CampaignSubmissionSummary = {
   submission_id: string;
   pharmacy_id: string;
   pharmacy_name: string;
-  status: 'draft' | 'submitted';
+  status: 'draft' | 'submitted' | 'needs_correction' | 'accepted';
   total_quantity: number;
   total_amount_ht: number;
   submitted_at: string | null;
@@ -59,11 +63,13 @@ export type CampaignSubmissionDetail = {
   submission_id: string;
   pharmacy_id: string;
   pharmacy_name: string;
-  status: 'draft' | 'submitted';
+  status: 'draft' | 'submitted' | 'needs_correction' | 'accepted';
   total_quantity: number;
   total_amount_ht: number;
   submitted_at: string | null;
   updated_at: string;
+  admin_correction_note: string | null;
+  reviewed_at: string | null;
   lines: Array<{
     product_id: string;
     product_name: string;
@@ -122,14 +128,21 @@ const ensureAcceptedParticipant = async (campaignId: string, pharmacyId: string)
 const loadSubmissionQuantities = async (campaignId: string, phaseKey: CampaignPhaseKey, pharmacyId: string) => {
   const { data: submission, error: submissionError } = await supabase
     .from('campaign_phase_submissions')
-    .select('id, status, updated_at')
+    .select('id, status, updated_at, admin_correction_note')
     .eq('campaign_id', campaignId)
     .eq('phase_key', phaseKey)
     .eq('pharmacy_id', pharmacyId)
     .maybeSingle();
 
   if (submissionError) throw new Error(submissionError.message);
-  if (!submission) return { quantities: new Map<string, number>(), status: null, updatedAt: null } as const;
+  if (!submission) {
+    return {
+      quantities: new Map<string, number>(),
+      status: null,
+      updatedAt: null,
+      adminCorrectionNote: null,
+    } as const;
+  }
 
   const { data: lines, error: linesError } = await supabase
     .from('campaign_phase_submission_lines')
@@ -145,8 +158,9 @@ const loadSubmissionQuantities = async (campaignId: string, phaseKey: CampaignPh
 
   return {
     quantities,
-    status: submission.status as 'draft' | 'submitted',
+    status: submission.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted',
     updatedAt: (submission.updated_at as string | null) ?? null,
+    adminCorrectionNote: (submission.admin_correction_note as string | null) ?? null,
   } as const;
 };
 
@@ -183,22 +197,95 @@ const getAccessibleOpenCampaignForPharmacy = async (campaignId: string, pharmacy
   };
 };
 
-const getCampaignProductConfigurationForPharmacy = async (campaignId: string) => {
+type PharmacyCampaignProductConfiguration = {
+  productIds: string[];
+  arrangementMode: 'inherit_laboratory' | 'custom';
+  arrangements: Array<{
+    product_id: string;
+    campaign_business_unit_id: string | null;
+    campaign_group_brand_id: string | null;
+  }>;
+  arrangementNamesByProductId: Map<string, { buName: string | null; groupName: string | null }>;
+};
+
+const getCampaignProductConfigurationForPharmacy = async (campaignId: string): Promise<PharmacyCampaignProductConfiguration> => {
+  const rpc = await supabase.rpc('get_my_campaign_product_configuration', { p_campaign_id: campaignId });
+  if (!rpc.error && Array.isArray(rpc.data)) {
+    const rows = rpc.data as Array<{
+      product_id: string;
+      arrangement_mode: 'inherit_laboratory' | 'custom' | null;
+      campaign_business_unit_id: string | null;
+      campaign_group_brand_id: string | null;
+      campaign_business_unit_name?: string | null;
+      campaign_group_brand_name?: string | null;
+    }>;
+    if (rows.length > 0) {
+      const modeFromRpc = rows[0]?.arrangement_mode ?? 'inherit_laboratory';
+      return {
+        productIds: rows.map((row) => row.product_id),
+        arrangementMode: modeFromRpc,
+        arrangementNamesByProductId: new Map(rows.map((row) => [row.product_id, {
+          buName: row.campaign_business_unit_name ?? null,
+          groupName: row.campaign_group_brand_name ?? null,
+        }])),
+        arrangements: rows
+          .filter((row) => row.campaign_business_unit_id || row.campaign_group_brand_id)
+          .map((row) => ({
+            product_id: row.product_id,
+            campaign_business_unit_id: row.campaign_business_unit_id ?? null,
+            campaign_group_brand_id: row.campaign_group_brand_id ?? null,
+          })),
+      };
+    }
+  }
+
   try {
-    return await getCampaignProductConfiguration(campaignId);
+    const direct = await getCampaignProductConfiguration(campaignId);
+    return {
+      ...direct,
+      arrangementNamesByProductId: new Map<string, { buName: string | null; groupName: string | null }>(),
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!isPermissionLikeError(message)) throw error;
 
-    const { data, error: productsError } = await supabase
+    const { data: productsData, error: productsError } = await supabase
       .from('campaign_products')
       .select('product_id')
       .eq('campaign_id', campaignId);
     if (productsError) throw new Error(productsError.message);
+
+    const [settingsResult, arrangementsResult] = await Promise.allSettled([
+      supabase
+        .from('campaign_product_settings')
+        .select('arrangement_mode')
+        .eq('campaign_id', campaignId)
+        .maybeSingle(),
+      supabase
+        .from('campaign_product_arrangements')
+        .select('product_id, campaign_business_unit_id, campaign_group_brand_id')
+        .eq('campaign_id', campaignId),
+    ]);
+
+    let arrangementMode: 'inherit_laboratory' | 'custom' = 'inherit_laboratory';
+    if (settingsResult.status === 'fulfilled' && !settingsResult.value.error) {
+      arrangementMode = ((settingsResult.value.data as any)?.arrangement_mode ?? 'inherit_laboratory') as 'inherit_laboratory' | 'custom';
+    }
+
+    let arrangements: Array<{ product_id: string; campaign_business_unit_id: string | null; campaign_group_brand_id: string | null }> = [];
+    if (arrangementsResult.status === 'fulfilled' && !arrangementsResult.value.error) {
+      arrangements = ((arrangementsResult.value.data ?? []) as any[]).map((row) => ({
+        product_id: row.product_id as string,
+        campaign_business_unit_id: (row.campaign_business_unit_id as string | null) ?? null,
+        campaign_group_brand_id: (row.campaign_group_brand_id as string | null) ?? null,
+      }));
+    }
+
     return {
-      productIds: (data ?? []).map((row) => row.product_id as string),
-      arrangementMode: 'inherit_laboratory' as const,
-      arrangements: [],
+      productIds: (productsData ?? []).map((row) => row.product_id as string),
+      arrangementMode,
+      arrangementNamesByProductId: new Map<string, { buName: string | null; groupName: string | null }>(),
+      arrangements,
     };
   }
 };
@@ -215,12 +302,14 @@ export const loadCampaignDynamicForm = async (
   if (!campaign.supplier_id) throw new Error('La campagne n\'a pas de laboratoire associe.');
   if (campaign.status !== 'open') throw new Error('La campagne doit etre ouverte.');
 
-  const [config, products, businessUnitsResult, groupBrandsResult, conditionsResult] = await Promise.allSettled([
+  const [config, products, businessUnitsResult, groupBrandsResult, conditionsResult, labBusinessUnitsResult, labGroupBrandsResult] = await Promise.allSettled([
     getCampaignProductConfigurationForPharmacy(campaignId),
     listManagedProductsForLaboratory(campaign.supplier_id),
     listCampaignBusinessUnits(campaignId),
     listCampaignGroupBrands(campaignId),
     listCampaignConditions(campaignId),
+    listBusinessUnitsForLaboratory(campaign.supplier_id),
+    listGroupBrandsForLaboratory(campaign.supplier_id),
   ]);
 
   if (config.status === 'rejected') throw config.reason;
@@ -228,11 +317,13 @@ export const loadCampaignDynamicForm = async (
   const resolvedBusinessUnits = businessUnitsResult.status === 'fulfilled' ? businessUnitsResult.value : [];
   const resolvedGroupBrands = groupBrandsResult.status === 'fulfilled' ? groupBrandsResult.value : [];
   const resolvedConditions = conditionsResult.status === 'fulfilled' ? conditionsResult.value : [];
+  const resolvedLabBusinessUnits = labBusinessUnitsResult.status === 'fulfilled' ? labBusinessUnitsResult.value : [];
+  const resolvedLabGroupBrands = labGroupBrandsResult.status === 'fulfilled' ? labGroupBrandsResult.value : [];
 
   await ensurePhaseEnabled(campaignId, phaseKey);
   await ensureAcceptedParticipant(campaignId, pharmacyId);
 
-  const { quantities, status, updatedAt } = await loadSubmissionQuantities(campaignId, phaseKey, pharmacyId);
+  const { quantities, status, updatedAt, adminCorrectionNote } = await loadSubmissionQuantities(campaignId, phaseKey, pharmacyId);
   const resolvedConfig = config.value;
   const productRows = products.value;
   const effectiveProductIds = resolvedConfig.productIds.length
@@ -240,7 +331,14 @@ export const loadCampaignDynamicForm = async (
     : productRows.map((product) => product.id);
   const selectedProducts = new Set(effectiveProductIds);
   const arrangementsByProduct = new Map(resolvedConfig.arrangements.map((row) => [row.product_id, row]));
+  const arrangementNamesByProduct = resolvedConfig.arrangementNamesByProductId ?? new Map<string, { buName: string | null; groupName: string | null }>();
   const productsById = new Map(productRows.map((product) => [product.id, product]));
+  const campaignBuByName = new Map(resolvedBusinessUnits.map((bu) => [bu.name.trim().toLowerCase(), bu.id]));
+  const campaignGroupByKey = new Map(
+    resolvedGroupBrands.map((group) => [`${group.campaign_business_unit_id ?? 'root'}::${group.name.trim().toLowerCase()}`, group.id]),
+  );
+  const labBuById = new Map(resolvedLabBusinessUnits.map((bu) => [bu.id, bu]));
+  const labGroupById = new Map(resolvedLabGroupBrands.map((group) => [group.id, group]));
 
   const rootProducts: CampaignDynamicProductRow[] = [];
   const buMap = new Map<string, CampaignDynamicBu>();
@@ -250,13 +348,33 @@ export const loadCampaignDynamicForm = async (
     const product = productsById.get(productId);
     if (!product || !selectedProducts.has(product.id)) continue;
     const arrangement = arrangementsByProduct.get(product.id);
+    let resolvedBuId = arrangement?.campaign_business_unit_id ?? null;
+    let resolvedGroupId = arrangement?.campaign_group_brand_id ?? null;
+
+    // Robust fallback for inherit mode: rebuild by laboratory hierarchy when explicit arrangement rows are missing.
+    if (!arrangement && resolvedConfig.arrangementMode === 'inherit_laboratory') {
+      const productBuId = (product as any).business_unit_id as string | null;
+      const productGroupId = (product as any).group_brand_id as string | null;
+      const labBu = productBuId ? labBuById.get(productBuId) : null;
+      const labGroup = productGroupId ? labGroupById.get(productGroupId) : null;
+
+      if (labBu?.name) {
+        resolvedBuId = campaignBuByName.get(labBu.name.trim().toLowerCase()) ?? `lab-bu:${labBu.id}`;
+      }
+      if (labGroup?.name) {
+        const groupKey = `${resolvedBuId ?? 'root'}::${labGroup.name.trim().toLowerCase()}`;
+        resolvedGroupId = campaignGroupByKey.get(groupKey) ?? `lab-group:${labGroup.id}`;
+      }
+    }
+
     const row: CampaignDynamicProductRow = {
       product_id: product.id,
       designation: product.designation,
       unit_price_ht: Number((product as any).purchase_unit_price_ht ?? 0),
+      vat_rate: Number((product as any).vat_rate ?? 0),
       quantity: quantities.get(product.id) ?? 0,
-      campaign_business_unit_id: arrangement?.campaign_business_unit_id ?? null,
-      campaign_group_brand_id: arrangement?.campaign_group_brand_id ?? null,
+      campaign_business_unit_id: resolvedBuId,
+      campaign_group_brand_id: resolvedGroupId,
     };
 
     if (!row.campaign_business_unit_id) {
@@ -264,21 +382,28 @@ export const loadCampaignDynamicForm = async (
       continue;
     }
 
-    const buName = resolvedBusinessUnits.find((bu) => bu.id === row.campaign_business_unit_id)?.name ?? 'BU';
-    const bu = buMap.get(row.campaign_business_unit_id) ?? {
+    const nameFromArrangement = arrangementNamesByProduct.get(product.id);
+    const buName = nameFromArrangement?.buName
+      ?? (row.campaign_business_unit_id.startsWith('lab-bu:')
+      ? (labBuById.get(row.campaign_business_unit_id.replace('lab-bu:', ''))?.name ?? 'BU')
+      : (resolvedBusinessUnits.find((bu) => bu.id === row.campaign_business_unit_id)?.name ?? 'BU'));
+    const bu = buMap.get(row.campaign_business_unit_id) ?? ({
       id: row.campaign_business_unit_id,
       name: buName,
       groups: [],
-    };
+    } as CampaignDynamicBu);
 
     if (!buMap.has(row.campaign_business_unit_id)) buMap.set(row.campaign_business_unit_id, bu);
 
     const groupId = row.campaign_group_brand_id ?? `__ungrouped__${bu.id}`;
-    const groupName = row.campaign_group_brand_id
-      ? (resolvedGroupBrands.find((group) => group.id === row.campaign_group_brand_id)?.name ?? 'GROUP')
-      : 'Sans GROUP';
+    const groupName = nameFromArrangement?.groupName
+      ?? (row.campaign_group_brand_id
+      ? (row.campaign_group_brand_id.startsWith('lab-group:')
+        ? (labGroupById.get(row.campaign_group_brand_id.replace('lab-group:', ''))?.name ?? 'GROUP')
+        : (resolvedGroupBrands.find((group) => group.id === row.campaign_group_brand_id)?.name ?? 'GROUP'))
+      : 'Sans GROUP');
 
-    const group = groupMap.get(groupId) ?? { id: groupId, name: groupName, products: [] };
+    const group = groupMap.get(groupId) ?? ({ id: groupId, name: groupName, products: [] } as CampaignDynamicGroup);
     if (!groupMap.has(groupId)) {
       groupMap.set(groupId, group);
       bu.groups.push(group);
@@ -299,6 +424,7 @@ export const loadCampaignDynamicForm = async (
     conditions: filteredConditions,
     submission_status: status,
     submission_updated_at: updatedAt,
+    admin_correction_note: adminCorrectionNote,
   };
 };
 
@@ -314,6 +440,17 @@ export const saveCampaignDynamicForm = async (payload: {
 
   await ensurePhaseEnabled(payload.campaignId, payload.phaseKey);
   await ensureAcceptedParticipant(payload.campaignId, pharmacyId);
+  const { data: existingSubmission, error: existingSubmissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('status, admin_correction_note')
+    .eq('campaign_id', payload.campaignId)
+    .eq('phase_key', payload.phaseKey)
+    .eq('pharmacy_id', pharmacyId)
+    .maybeSingle();
+  if (existingSubmissionError) throw new Error(existingSubmissionError.message);
+  if (existingSubmission?.status === 'accepted') {
+    throw new Error('Cette soumission est deja acceptee par les admins et ne peut plus etre modifiee.');
+  }
 
   const config = await getCampaignProductConfigurationForPharmacy(payload.campaignId);
   const campaign = await getAccessibleOpenCampaignForPharmacy(payload.campaignId, pharmacyId);
@@ -353,8 +490,9 @@ export const saveCampaignDynamicForm = async (payload: {
       campaign_id: payload.campaignId,
       phase_key: payload.phaseKey,
       pharmacy_id: pharmacyId,
-      status: payload.submit ? 'submitted' : 'draft',
+      status: payload.submit ? 'submitted' : (existingSubmission?.status === 'needs_correction' ? 'needs_correction' : 'draft'),
       submitted_at: payload.submit ? new Date().toISOString() : null,
+      admin_correction_note: existingSubmission?.status === 'needs_correction' ? existingSubmission.admin_correction_note ?? null : null,
       total_quantity: totalQty,
       total_amount_ht: Number(totalAmount.toFixed(3)),
     }, { onConflict: 'campaign_id,phase_key,pharmacy_id' })
@@ -384,7 +522,7 @@ export const saveCampaignDynamicForm = async (payload: {
 export const listCampaignPhaseSubmissionSummaries = async (campaignId: string, phaseKey: CampaignPhaseKey): Promise<CampaignSubmissionSummary[]> => {
   const { data, error } = await supabase
     .from('campaign_phase_submissions')
-    .select('id, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at')
+    .select('id, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at, admin_correction_note')
     .eq('campaign_id', campaignId)
     .eq('phase_key', phaseKey)
     .order('updated_at', { ascending: false });
@@ -406,7 +544,7 @@ export const listCampaignPhaseSubmissionSummaries = async (campaignId: string, p
     submission_id: row.id as string,
     pharmacy_id: row.pharmacy_id as string,
     pharmacy_name: names.get(row.pharmacy_id as string) ?? 'Pharmacie',
-    status: row.status as 'draft' | 'submitted',
+    status: row.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted',
     total_quantity: Number(row.total_quantity ?? 0),
     total_amount_ht: Number(row.total_amount_ht ?? 0),
     submitted_at: (row.submitted_at as string | null) ?? null,
@@ -417,7 +555,7 @@ export const listCampaignPhaseSubmissionSummaries = async (campaignId: string, p
 export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Promise<CampaignSubmissionDetail> => {
   const { data: submission, error: submissionError } = await supabase
     .from('campaign_phase_submissions')
-    .select('id, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at')
+    .select('id, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at, admin_correction_note, reviewed_at')
     .eq('id', submissionId)
     .single();
 
@@ -443,11 +581,13 @@ export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Pr
     submission_id: submission.id as string,
     pharmacy_id: submission.pharmacy_id as string,
     pharmacy_name: (pharmacy?.name as string | undefined) ?? 'Pharmacie',
-    status: submission.status as 'draft' | 'submitted',
+    status: submission.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted',
     total_quantity: Number(submission.total_quantity ?? 0),
     total_amount_ht: Number(submission.total_amount_ht ?? 0),
     submitted_at: (submission.submitted_at as string | null) ?? null,
     updated_at: submission.updated_at as string,
+    admin_correction_note: (submission.admin_correction_note as string | null) ?? null,
+    reviewed_at: (submission.reviewed_at as string | null) ?? null,
     lines: (lines ?? []).map((line) => ({
       product_id: line.product_id as string,
       product_name: line.product_name as string,
@@ -458,4 +598,22 @@ export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Pr
       line_total_ht: Number(line.line_total_ht ?? 0),
     })),
   };
+};
+
+export const reviewCampaignPhaseSubmission = async (payload: {
+  submissionId: string;
+  action: 'accept' | 'request_correction';
+  note?: string | null;
+}) => {
+  const note = payload.note?.trim() ?? null;
+  const updates = payload.action === 'accept'
+    ? { status: 'accepted', admin_correction_note: note, reviewed_at: new Date().toISOString() }
+    : { status: 'needs_correction', admin_correction_note: note, reviewed_at: new Date().toISOString() };
+
+  const { error } = await supabase
+    .from('campaign_phase_submissions')
+    .update(updates)
+    .eq('id', payload.submissionId);
+
+  if (error) throw new Error(error.message);
 };

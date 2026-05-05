@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select } from '@/components/ui/input';
+import { Input, Select } from '@/components/ui/input';
 import { CampaignPhaseKey } from '@/services/campaigns';
-import { getCampaignPhaseSubmissionDetail, listCampaignPhaseSubmissionSummaries } from '@/services/campaignParticipationForms';
+import { getCampaignPhaseSubmissionDetail, listCampaignPhaseSubmissionSummaries, reviewCampaignPhaseSubmission } from '@/services/campaignParticipationForms';
 
 const PHASE_OPTIONS: Array<{ key: CampaignPhaseKey; label: string }> = [
   { key: 'purchase_intentions', label: 'Intentions d\'achat' },
@@ -25,6 +25,8 @@ export const CampaignParticipationsPage = () => {
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof getCampaignPhaseSubmissionDetail>> | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [reviewNote, setReviewNote] = useState('');
+  const [isReviewing, setIsReviewing] = useState(false);
 
   const load = async () => {
     if (!campaignId) return;
@@ -65,6 +67,27 @@ export const CampaignParticipationsPage = () => {
 
     void loadDetail();
   }, [selectedSubmissionId]);
+
+  const canReview = phase === 'purchase_intentions' || phase === 'purchase_orders';
+
+  const review = async (action: 'accept' | 'request_correction') => {
+    if (!selectedSubmissionId) return;
+    setIsReviewing(true);
+    setFeedback(null);
+    try {
+      await reviewCampaignPhaseSubmission({
+        submissionId: selectedSubmissionId,
+        action,
+        note: reviewNote,
+      });
+      await load();
+      setFeedback(action === 'accept' ? 'Soumission acceptee.' : 'Rectification demandee.');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Action impossible.');
+    } finally {
+      setIsReviewing(false);
+    }
+  };
 
   const globalTotals = useMemo(() => {
     return rows.reduce((acc, row) => {
@@ -130,6 +153,27 @@ export const CampaignParticipationsPage = () => {
               <div className="grid" style={{ gap: 8 }}>
                 <p style={{ margin: 0 }}><strong>{detail.pharmacy_name}</strong> - {detail.status}</p>
                 <p style={{ margin: 0 }}>Total: {detail.total_quantity} U - {money(detail.total_amount_ht)} HT</p>
+                {detail.admin_correction_note && <p style={{ margin: 0, color: '#475467' }}>Note admin: {detail.admin_correction_note}</p>}
+                {canReview && (
+                  <div className="grid" style={{ gap: 8 }}>
+                    <Input placeholder="Note admin (optionnelle)" value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} />
+                    <div className="toolbar">
+                      <Button
+                        variant="secondary"
+                        disabled={isReviewing || detail.status === 'accepted'}
+                        onClick={() => void review('request_correction')}
+                      >
+                        Demander rectification
+                      </Button>
+                      <Button
+                        disabled={isReviewing || detail.status === 'accepted'}
+                        onClick={() => void review('accept')}
+                      >
+                        Accepter
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div style={{ borderTop: '1px solid #e4e4e7', paddingTop: 8 }}>
                   {detail.lines.map((line) => (
                     <div key={`${line.product_id}-${line.campaign_group_brand_id ?? 'root'}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 10, padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>

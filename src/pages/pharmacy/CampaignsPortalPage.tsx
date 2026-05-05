@@ -144,7 +144,13 @@ export const CampaignsPortalPage = () => {
         const canProceed = campaign.participation_status === 'accepted';
         const isDeciding = pendingDecisionCampaignId === campaign.campaign_id;
         const enabledSteps = FLOW_ORDER.filter((step) => campaign.enabled_phases.includes(step.key));
-        const activeStepKey = canProceed && enabledSteps.length ? enabledSteps[0].key : null;
+        const statusByStep = campaign.phase_submission_statuses ?? {};
+        const firstAvailableStep = enabledSteps.find((step, index) => {
+          if (index === 0) return true;
+          const previous = enabledSteps[index - 1];
+          return statusByStep[previous.key] === 'accepted';
+        });
+        const activeStepKey = canProceed ? (firstAvailableStep?.key ?? null) : null;
         const flowStarted = campaign.participation_status === 'accepted';
 
         return (
@@ -188,6 +194,7 @@ export const CampaignsPortalPage = () => {
               <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
                 {enabledSteps.map((step, index) => {
                   const isActive = step.key === activeStepKey;
+                  const currentStatus = statusByStep[step.key];
                   const isDeliveryStep = step.key === 'delivery_notes';
                   const stepNumber = index + 1;
                   const window = campaign.phase_windows?.[step.key];
@@ -218,6 +225,11 @@ export const CampaignsPortalPage = () => {
                         {!isActive && (
                           <p style={{ margin: '4px 0 0 0', color: '#667085', fontSize: 12 }}>
                             Disponible apres finalisation de l'etape precedente.
+                          </p>
+                        )}
+                        {currentStatus && (
+                          <p style={{ margin: '4px 0 0 0', color: '#475467', fontSize: 12 }}>
+                            Statut: {currentStatus}
                           </p>
                         )}
                       </div>
