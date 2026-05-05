@@ -869,10 +869,23 @@ export const CampaignSetupPage = () => {
     }
   };
 
-  const removeInvalidConditions = () => {
+  const removeInvalidConditions = async () => {
     const invalidIndexes = conditions
       .map((row, index) => ({ row, index }))
-      .filter(({ row }) => !hasProductsForConditionTarget(row))
+      .filter(({ row }) => {
+        const standalone = validateConditionCollection([row]);
+        if (standalone.blocking.length) return true;
+        if (validateConditionScopeShape(row)) return true;
+        if (!hasProductsForConditionTarget(row)) return true;
+        if (row.target_value <= 0) return true;
+        if (row.unit === '%' && row.target_value > 100) return true;
+        if (row.condition_kind.includes('_pct_')) {
+          const allowed = CONDITION_KIND_OPTIONS_BY_SCOPE[row.scope_type].find((opt) => opt.value === row.condition_kind)?.allowedReferenceScopes ?? [];
+          if (!row.reference_scope_type || !allowed.includes(row.reference_scope_type)) return true;
+        }
+        if (row.condition_kind.includes('_modulo_') && !Number.isInteger(row.target_value)) return true;
+        return false;
+      })
       .map(({ index }) => index);
 
     if (!invalidIndexes.length) {
@@ -881,9 +894,24 @@ export const CampaignSetupPage = () => {
     }
 
     const invalidSet = new Set(invalidIndexes);
-    setConditions((current) => current.filter((_, index) => !invalidSet.has(index)));
+    const sanitized = conditions.filter((_, index) => !invalidSet.has(index));
+    setConditions(sanitized);
     setFeedback(null);
-    showToast(`${invalidIndexes.length} condition(s) invalide(s) supprimée(s).`);
+
+    if (!campaignId) {
+      showToast(`${invalidIndexes.length} condition(s) invalide(s) supprimée(s).`);
+      return;
+    }
+
+    setIsSavingConditions(true);
+    try {
+      await saveCampaignConditions(campaignId, sanitized.map((row) => ({ ...row, phase: conditionsPhase })));
+      showToast(`${invalidIndexes.length} condition(s) invalide(s) supprimée(s) et enregistrée(s).`);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Nettoyage effectué localement, mais enregistrement impossible.');
+    } finally {
+      setIsSavingConditions(false);
+    }
   };
 
   const currentConditionOptions = CONDITION_KIND_OPTIONS_BY_SCOPE[conditionDraft.scope_type];
@@ -1841,7 +1869,7 @@ export const CampaignSetupPage = () => {
                   <div style={{ marginBottom: 10, border: '1px solid #fecaca', borderRadius: 12, background: '#fff1f2', padding: '10px 12px' }}>
                     <div className="toolbar" style={{ gap: 10 }}>
                       <p style={{ margin: 0, fontWeight: 700, color: '#9f1239', fontSize: 13 }}>Erreurs bloquantes ({conditionsValidationReport.blocking.length})</p>
-                      {conditionsValidationReport.blocking.some((issue) => issue.includes('COND_ITEM_001')) ? (
+                      {conditionsValidationReport.blocking.length ? (
                         <Button
                           variant="secondary"
                           onClick={removeInvalidConditions}

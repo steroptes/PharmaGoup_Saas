@@ -175,9 +175,10 @@ export const getCampaignById = async (campaignId: string) => {
     .from('campaigns')
     .select('id, name, supplier_id, start_date, end_date, status, created_at')
     .eq('id', campaignId)
-    .single();
+    .maybeSingle();
 
   if (error) throw new Error(formatCampaignTableError(error.message));
+  if (!data) throw new Error('Campagne introuvable ou non accessible.');
   return data as Omit<CampaignRow, 'supplier_name' | 'participants_count'>;
 };
 
