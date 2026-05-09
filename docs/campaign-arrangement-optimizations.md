@@ -87,3 +87,64 @@ L'implémentation actuelle de bascule vers l'arrangement catalogue est volontair
 - Moins de requêtes Supabase sur un scénario de bascule catalogue.
 - Temps de traitement réduit sur campagnes volumineuses.
 - Aucune incohérence observée sur les affectations produit -> BU/GROUP.
+
+## Amélioration à venir - Messagerie de rectification (type chat)
+
+### Objectif
+Mettre en place un système de suivi conversationnel des rectifications entre admin et pharmacie (format thread/messages), avec blocage d'acceptation tant que les rectifications ouvertes ne sont pas résolues.
+
+### Périmètre fonctionnel
+- Ouvrir une demande de rectification sur une portée:
+  - campagne
+  - BU
+  - GROUP
+  - produit
+- Échanger des messages sur chaque demande (historique horodaté).
+- Marquer une demande comme:
+  - `open`
+  - `resolved`
+  - `reopened`
+- Empêcher l'admin d'accepter une soumission tant qu'il existe au moins une demande `open` ou `reopened`.
+- Afficher côté pharmacie les alertes ciblées sur les sections/items concernés + accès au fil de discussion.
+
+### Modèle de données proposé
+- `correction_threads`
+  - `id`, `submission_id`, `scope_type`, `campaign_business_unit_id`, `campaign_group_brand_id`, `product_id`
+  - `title`, `status`, `created_by`, `assigned_to`, `created_at`, `updated_at`, `resolved_at`, `resolved_by`
+- `correction_messages`
+  - `id`, `thread_id`, `author_user_id`, `author_role`, `message`, `message_type`, `created_at`, `edited_at`
+- `correction_thread_reads`
+  - `thread_id`, `user_id`, `last_read_message_id`, `last_read_at`
+
+### API / services front à prévoir
+- `listCorrectionThreads(submissionId)`
+- `createCorrectionThread(payload)`
+- `listCorrectionMessages(threadId)`
+- `sendCorrectionMessage(payload)`
+- `markCorrectionThreadResolved(threadId)`
+- `reopenCorrectionThread(threadId)`
+- `markThreadRead(threadId, lastReadMessageId)`
+- `canAcceptSubmission(submissionId)` (ou calcul local équivalent)
+
+### Règles de sécurité (RLS)
+- Admin: accès lecture/écriture sur les threads/messages des soumissions de son périmètre.
+- Pharmacie: accès uniquement aux threads/messages de ses propres soumissions.
+- Changement de statut (`resolved`, `reopened`): réservé admin.
+
+### UX cible
+- Admin:
+  - liste des threads de rectification avec badge de statut et non-lus
+  - vue chat par thread
+  - actions `Marquer résolu` / `Réouvrir`
+- Pharmacie:
+  - badge d'alerte sur section/produit impacté
+  - vue conversation par demande
+  - réponse textuelle horodatée
+
+### Plan d'implémentation recommandé
+1. Migrations SQL + index + RLS.
+2. Services TypeScript (threads/messages/reads).
+3. UI admin (liste + chat + resolve/reopen).
+4. UI pharmacie (alertes ciblées + chat de réponse).
+5. Blocage d'acceptation basé sur statut des threads.
+6. Realtime Supabase (optionnel mais recommandé).

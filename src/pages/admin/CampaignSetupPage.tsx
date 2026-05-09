@@ -1734,6 +1734,28 @@ export const CampaignSetupPage = () => {
                         </div>
                       </details>
                     ))}
+                    {catalogTree?.root_group_brands.filter(hasVisibleProductsInGroup).map((group) => (
+                      <details key={group.id} open style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: 10 }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>GROUP: {group.name}</summary>
+                        <div style={{ marginTop: 8 }}>
+                          {group.products.filter(isProductVisible).map((product) => {
+                            const checked = selectedProductIds.includes(product.id);
+                            return <label key={product.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: checked ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '8px 10px', background: checked ? '#fafafa' : '#fff', cursor: 'pointer', marginBottom: 8 }}><span style={{ color: '#111827', fontSize: 14 }}>{product.designation}</span><Checkbox checked={checked} onCheckedChange={() => toggleProduct(product.id)} /></label>;
+                          })}
+                        </div>
+                      </details>
+                    ))}
+                    {catalogTree?.root_products.filter(isProductVisible).length ? (
+                      <details open style={{ border: '1px solid #e4e4e7', borderRadius: 10, padding: 10 }}>
+                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Produits racine</summary>
+                        <div style={{ marginTop: 8 }}>
+                          {catalogTree.root_products.filter(isProductVisible).map((product) => {
+                            const checked = selectedProductIds.includes(product.id);
+                            return <label key={product.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: checked ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 10, padding: '8px 10px', background: checked ? '#fafafa' : '#fff', cursor: 'pointer', marginBottom: 8 }}><span style={{ color: '#111827', fontSize: 14 }}>{product.designation}</span><Checkbox checked={checked} onCheckedChange={() => toggleProduct(product.id)} /></label>;
+                          })}
+                        </div>
+                      </details>
+                    ) : null}
                   </div>
                 </div>
               )}

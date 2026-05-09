@@ -18,6 +18,21 @@ export type PharmacyCampaignSummary = {
   phase_submission_statuses: Partial<Record<PharmacyCampaignPhaseKey, 'draft' | 'submitted' | 'needs_correction' | 'accepted'>>;
 };
 
+const normalizePhaseStatuses = (raw: unknown): PharmacyCampaignSummary['phase_submission_statuses'] => {
+  if (!raw || typeof raw !== 'object') return {};
+  const source = raw as Record<string, unknown>;
+  const allowedPhaseKeys: PharmacyCampaignPhaseKey[] = ['purchase_intentions', 'purchase_orders', 'delivery_notes'];
+  const allowedStatuses = new Set(['draft', 'submitted', 'needs_correction', 'accepted']);
+  const out: PharmacyCampaignSummary['phase_submission_statuses'] = {};
+  for (const key of allowedPhaseKeys) {
+    const value = source[key];
+    if (typeof value === 'string' && allowedStatuses.has(value)) {
+      out[key] = value as 'draft' | 'submitted' | 'needs_correction' | 'accepted';
+    }
+  }
+  return out;
+};
+
 const buildSupplierMap = async () => {
   const { data: labs, error: labsError } = await supabase.from('laboratories').select('id, designation');
   if (!labsError && labs?.length) {
@@ -44,6 +59,31 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
       rpcRows = (v1.data as any[]) ?? [];
     }
     const supplierMap = await buildSupplierMap();
+    const campaignIds = (rpcRows ?? []).map((row: any) => row.campaign_id as string).filter(Boolean);
+    let fallbackStatusesByCampaign = new Map<string, PharmacyCampaignSummary['phase_submission_statuses']>();
+    try {
+      const inferredPharmacyId = await resolveCurrentUserPharmacyId();
+      if (inferredPharmacyId && campaignIds.length) {
+        const { data: submissions, error: submissionsError } = await supabase
+          .from('campaign_phase_submissions')
+          .select('campaign_id, phase_key, status')
+          .in('campaign_id', campaignIds)
+          .eq('pharmacy_id', inferredPharmacyId);
+        if (!submissionsError) {
+          for (const row of submissions ?? []) {
+            const campaignKey = row.campaign_id as string;
+            const phaseStatuses = fallbackStatusesByCampaign.get(campaignKey) ?? {};
+            const phaseKey = row.phase_key as PharmacyCampaignPhaseKey;
+            const status = row.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted';
+            phaseStatuses[phaseKey] = status;
+            fallbackStatusesByCampaign.set(campaignKey, phaseStatuses);
+          }
+        }
+      }
+    } catch {
+      // fallback best-effort only
+    }
+
     return (rpcRows ?? []).map((row: any) => ({
       campaign_id: row.campaign_id as string,
       campaign_name: row.campaign_name as string,
@@ -56,7 +96,19 @@ export const listCampaignsForPharmacyPortal = async (pharmacyId?: string | null)
       participation_decided_at: (row.participation_decided_at as string | null) ?? null,
       enabled_phases: ((row.enabled_phases as PharmacyCampaignPhaseKey[] | null) ?? []),
       phase_windows: (row.phase_windows as PharmacyCampaignSummary['phase_windows'] | null) ?? {},
-      phase_submission_statuses: {},
+      phase_submission_statuses: Object.keys(normalizePhaseStatuses(
+        row.phase_submission_statuses
+        ?? row.submission_statuses
+        ?? row.phase_statuses
+        ?? null,
+      )).length
+        ? normalizePhaseStatuses(
+          row.phase_submission_statuses
+          ?? row.submission_statuses
+          ?? row.phase_statuses
+          ?? null,
+        )
+        : (fallbackStatusesByCampaign.get(row.campaign_id as string) ?? {}),
     }));
   }
 

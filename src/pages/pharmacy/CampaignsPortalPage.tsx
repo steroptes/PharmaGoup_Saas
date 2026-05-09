@@ -33,6 +33,12 @@ const FLOW_ORDER: FlowStep[] = [
   { key: 'purchase_orders', label: 'Creer un bon de commande', actionLabel: 'Creer' },
   { key: 'delivery_notes', label: 'Televerser un BL', actionLabel: 'Televerser' },
 ];
+const normalizeSubmissionStatus = (value: unknown): 'draft' | 'submitted' | 'needs_correction' | 'accepted' | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'draft' || normalized === 'submitted' || normalized === 'needs_correction' || normalized === 'accepted') return normalized;
+  return null;
+};
 
 export const CampaignsPortalPage = () => {
   const navigate = useNavigate();
@@ -146,9 +152,12 @@ export const CampaignsPortalPage = () => {
         const enabledSteps = FLOW_ORDER.filter((step) => campaign.enabled_phases.includes(step.key));
         const statusByStep = campaign.phase_submission_statuses ?? {};
         const firstAvailableStep = enabledSteps.find((step, index) => {
+          const current = normalizeSubmissionStatus(statusByStep[step.key]);
+          if (current === 'accepted') return false;
           if (index === 0) return true;
           const previous = enabledSteps[index - 1];
-          return statusByStep[previous.key] === 'accepted';
+          const previousStatus = normalizeSubmissionStatus(statusByStep[previous.key]);
+          return previousStatus === 'accepted';
         });
         const activeStepKey = canProceed ? (firstAvailableStep?.key ?? null) : null;
         const flowStarted = campaign.participation_status === 'accepted';
@@ -194,7 +203,7 @@ export const CampaignsPortalPage = () => {
               <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
                 {enabledSteps.map((step, index) => {
                   const isActive = step.key === activeStepKey;
-                  const currentStatus = statusByStep[step.key];
+                  const currentStatus = normalizeSubmissionStatus(statusByStep[step.key]);
                   const isDeliveryStep = step.key === 'delivery_notes';
                   const stepNumber = index + 1;
                   const window = campaign.phase_windows?.[step.key];
