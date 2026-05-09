@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from 'react';
+﻿import { useState, type ChangeEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { extractDeliveryNoteFromFile } from '@/services/ocr/tesseractExtractor';
 import { Button } from '@/components/ui/button';
@@ -65,7 +65,7 @@ export const UploadPage = () => {
         <Input type="file" accept=".jpg,.jpeg,.png" onChange={onFileChange} />
       </Card>
 
-      {loading && <section className="alert">Extraction OCR en cours…</section>}
+      {loading && <section className="alert">Extraction OCR en cours...</section>}
       {error && <section className="alert">{error}</section>}
 
       {result && (
