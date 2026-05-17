@@ -33,6 +33,7 @@ export const AppShell = () => {
             <>
               <hr className="sidebar-divider" />
               <Link to="/admin/laboratories">Laboratoires</Link>
+              <Link to="/admin/suppliers">Fournisseurs</Link>
               <Link to="/admin/products">Produits</Link>
               <Link to="/admin/campaigns">Campagnes</Link>
               <Link to="/admin/review">Traitement BL</Link>

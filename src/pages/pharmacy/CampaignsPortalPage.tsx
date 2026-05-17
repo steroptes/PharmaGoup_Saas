@@ -25,13 +25,13 @@ const participationLabel = (value: PharmacyCampaignSummary['participation_status
 type FlowStep = {
   key: 'purchase_intentions' | 'purchase_orders' | 'delivery_notes';
   label: string;
-  actionLabel: string;
+  createLabel: string;
 };
 
 const FLOW_ORDER: FlowStep[] = [
-  { key: 'purchase_intentions', label: "Annoncer les intentions d'achat", actionLabel: 'Annoncer' },
-  { key: 'purchase_orders', label: 'Creer un bon de commande', actionLabel: 'Creer' },
-  { key: 'delivery_notes', label: 'Televerser un BL', actionLabel: 'Televerser' },
+  { key: 'purchase_intentions', label: "Annoncer les intentions d'achat", createLabel: 'Creer' },
+  { key: 'purchase_orders', label: 'Creer un bon de commande', createLabel: 'Creer' },
+  { key: 'delivery_notes', label: 'Televerser un BL', createLabel: 'Creer' },
 ];
 const normalizeSubmissionStatus = (value: unknown): 'draft' | 'submitted' | 'needs_correction' | 'accepted' | null => {
   if (typeof value !== 'string') return null;
@@ -205,6 +205,14 @@ export const CampaignsPortalPage = () => {
                   const isActive = step.key === activeStepKey;
                   const currentStatus = normalizeSubmissionStatus(statusByStep[step.key]);
                   const isDeliveryStep = step.key === 'delivery_notes';
+                  const canConsultReadonly = currentStatus === 'accepted';
+                  const canModify = currentStatus === 'draft' || currentStatus === 'submitted' || currentStatus === 'needs_correction';
+                  const canOpenStep = isActive || canConsultReadonly || canModify;
+                  const actionLabel = canConsultReadonly
+                    ? 'Consulter'
+                    : canModify
+                      ? 'Modifier'
+                      : step.createLabel;
                   const stepNumber = index + 1;
                   const window = campaign.phase_windows?.[step.key];
 
@@ -231,7 +239,7 @@ export const CampaignsPortalPage = () => {
                         ) : (
                           <p style={{ margin: '4px 0 0 0', color: '#667085', fontSize: 12 }}>Periode non limitee</p>
                         )}
-                        {!isActive && (
+                        {!isActive && !canConsultReadonly && (
                           <p style={{ margin: '4px 0 0 0', color: '#667085', fontSize: 12 }}>
                             Disponible apres finalisation de l'etape precedente.
                           </p>
@@ -245,19 +253,19 @@ export const CampaignsPortalPage = () => {
 
                       {isDeliveryStep ? (
                         <Button
-                          variant={isActive ? 'default' : 'secondary'}
-                          disabled={!isActive}
+                          variant={canOpenStep ? 'default' : 'secondary'}
+                          disabled={!canOpenStep}
                           onClick={() => navigate(`/pharmacy/upload?campaignId=${campaign.campaign_id}`)}
                         >
-                          {step.actionLabel}
+                          {actionLabel}
                         </Button>
                       ) : (
                         <Button
-                          variant={isActive ? 'default' : 'secondary'}
-                          disabled={!isActive}
+                          variant={canOpenStep ? 'default' : 'secondary'}
+                          disabled={!canOpenStep}
                           onClick={() => navigate(`/pharmacy/campaigns/${campaign.campaign_id}/form?phase=${step.key}`)}
                         >
-                          {step.actionLabel}
+                          {actionLabel}
                         </Button>
                       )}
                     </div>

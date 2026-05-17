@@ -13,6 +13,7 @@ import { CampaignSetupPage } from '@/pages/admin/CampaignSetupPage';
 import { CampaignParticipationsPage } from '@/pages/admin/CampaignParticipationsPage';
 import { ReviewPage } from '@/pages/admin/ReviewPage';
 import { GroupagePage } from '@/pages/admin/GroupagePage';
+import { SuppliersPage } from '@/pages/admin/SuppliersPage';
 import { LaboratoriesPage } from '@/pages/admin/LaboratoriesPage';
 import { ProductsPage } from '@/pages/admin/ProductsPage';
 import { UsersPage } from '@/pages/admin/UsersPage';
@@ -109,6 +110,7 @@ export const AppRouter = () => (
           <Route path="/admin/campaigns/:campaignId/participations" element={<CampaignParticipationsPage />} />
           <Route path="/admin/review" element={<ReviewPage />} />
           <Route path="/admin/groupage" element={<GroupagePage />} />
+          <Route path="/admin/suppliers" element={<SuppliersPage />} />
           <Route path="/admin/laboratories" element={<LaboratoriesPage />} />
           <Route path="/admin/products" element={<ProductsPage />} />
           <Route path="/admin/users" element={<UsersPage />} />

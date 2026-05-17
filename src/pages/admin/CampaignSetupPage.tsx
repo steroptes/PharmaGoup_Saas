@@ -5,10 +5,12 @@ import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input, Select } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { supabase } from '@/lib/supabase';
 import { CatalogBusinessUnitNode, CatalogGroupBrandNode, CatalogProductNode, LaboratoryCatalogTree, getLaboratoryCatalogTree } from '@/services/catalogue';
 import {
   CampaignPhase,
   CampaignPhaseKey,
+  OrderPlacementMode,
   CampaignScopeType,
   CampaignConditionPhase,
   BonificationNature,
@@ -32,6 +34,7 @@ import {
   listCampaignGroupBrands,
   listCampaignParticipantIds,
   listCampaignPhases,
+  listCampaignPhaseAuthorizedSuppliers,
   listGroupBrandsForLaboratory,
   listManagedProductsForLaboratory,
   replaceCampaignParticipants,
@@ -43,9 +46,11 @@ import {
   updateCampaignStatus,
   updateCampaignDetails,
   upsertCampaignPhases,
+  replaceCampaignPhaseAuthorizedSuppliers,
 } from '@/services/campaigns';
 import { Laboratory, listLaboratories } from '@/services/laboratories';
 import { Pharmacy, listPharmacies } from '@/services/pharmacies';
+import { Supplier, listSuppliers } from '@/services/suppliers';
 
 type StepKey = 'details' | 'audience' | 'products' | 'conditions' | 'bonifications' | 'validation';
 type ToastMessage = { id: string; message: string };
@@ -92,9 +97,9 @@ const PHASE_DEFINITIONS: Array<{ key: CampaignPhaseKey; label: string; required:
   { key: 'delivery_notes', label: 'Collecte des bons de livraisons', required: true },
 ];
 const DEFAULT_PHASES: CampaignPhase[] = [
-  { phase_key: 'purchase_intentions', is_enabled: false, has_period_limit: false, start_date: null, end_date: null },
-  { phase_key: 'purchase_orders', is_enabled: false, has_period_limit: false, start_date: null, end_date: null },
-  { phase_key: 'delivery_notes', is_enabled: true, has_period_limit: false, start_date: null, end_date: null },
+  { phase_key: 'purchase_intentions', is_enabled: false, has_period_limit: false, start_date: null, end_date: null, allow_higher_than_intentions: false, order_placement_mode: 'participant_choice', multi_supplier_enabled: false },
+  { phase_key: 'purchase_orders', is_enabled: false, has_period_limit: false, start_date: null, end_date: null, allow_higher_than_intentions: false, order_placement_mode: 'participant_choice', multi_supplier_enabled: false },
+  { phase_key: 'delivery_notes', is_enabled: true, has_period_limit: false, start_date: null, end_date: null, allow_higher_than_intentions: false, order_placement_mode: 'participant_choice', multi_supplier_enabled: false },
 ];
 const CONDITION_KIND_OPTIONS_BY_SCOPE: Record<CampaignScopeType, ConditionKindOption[]> = {
   product: [
@@ -157,6 +162,8 @@ export const CampaignSetupPage = () => {
   const [moveTargetBuId, setMoveTargetBuId] = useState('');
   const [moveTargetGroupId, setMoveTargetGroupId] = useState('');
   const [phases, setPhases] = useState<CampaignPhase[]>(DEFAULT_PHASES);
+  const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]);
+  const [authorizedOrderSupplierIds, setAuthorizedOrderSupplierIds] = useState<string[]>([]);
   const [initialPhaseEnablement, setInitialPhaseEnablement] = useState<Record<CampaignPhaseKey, boolean>>({
     purchase_intentions: false,
     purchase_orders: false,
@@ -225,7 +232,7 @@ export const CampaignSetupPage = () => {
       setIsLoadingDetails(true);
       setFeedback(null);
       try {
-        const [campaign, labs, campaignPhases, pharmacyRows, participantIds, productConfiguration, conditionRows, bonificationRows] = await Promise.all([
+        const [campaign, labs, campaignPhases, pharmacyRows, participantIds, productConfiguration, conditionRows, bonificationRows, suppliers, authorizedSuppliers] = await Promise.all([
           getCampaignById(campaignId),
           listLaboratories(),
           listCampaignPhases(campaignId),
@@ -234,6 +241,8 @@ export const CampaignSetupPage = () => {
           getCampaignProductConfiguration(campaignId),
           listCampaignConditions(campaignId),
           listCampaignBonifications(campaignId),
+          listSuppliers(),
+          listCampaignPhaseAuthorizedSuppliers(campaignId, 'purchase_orders'),
         ]);
         setName(campaign.name);
         setLaboratoryId(campaign.supplier_id ?? '');
@@ -259,6 +268,8 @@ export const CampaignSetupPage = () => {
           setConditionsPhase(conditionRows[0].phase);
         }
         setBonifications(bonificationRows);
+        setAllSuppliers(suppliers.filter((supplier) => supplier.is_active));
+        setAuthorizedOrderSupplierIds(authorizedSuppliers);
         if (campaignPhases.length) {
           const byKey = new Map(campaignPhases.map((phase) => [phase.phase_key, phase]));
           const mergedPhases = DEFAULT_PHASES.map((phase) => ({
@@ -385,7 +396,7 @@ export const CampaignSetupPage = () => {
     if (campaignStatus === 'open') {
       const phaseEnablementChanged = phases.some((phase) => initialPhaseEnablement[phase.phase_key] !== phase.is_enabled);
       if (phaseEnablementChanged) {
-        return setFeedback("Campagne ouverte: l'activation des phases ne peut plus être modifiée. Seules les périodes et leurs dates restent éditables.");
+        return setFeedback("Campagne ouverte: l'activation des phases ne peut plus être modifiée. Les périodes, dates et le mode de passage des commandes BC restent éditables.");
       }
     }
 
@@ -405,8 +416,39 @@ export const CampaignSetupPage = () => {
     setIsSavingDetails(true);
     setFeedback(null);
     try {
+      const purchaseOrdersEnabled = phases.find((phase) => phase.phase_key === 'purchase_orders')?.is_enabled ?? false;
+      if (purchaseOrdersEnabled && selectedPharmacyIds.length) {
+        if (!authorizedOrderSupplierIds.length) {
+          throw new Error('Parametrage BC incomplet: renseignez au moins un fournisseur autorise pour la campagne.');
+        }
+        const { data: partnerRows, error: partnerRowsError } = await supabase
+          .from('pharmacy_partner_suppliers')
+          .select('pharmacy_id, supplier_id')
+          .in('pharmacy_id', selectedPharmacyIds);
+        if (partnerRowsError) throw new Error(partnerRowsError.message);
+
+        const authorizedSet = new Set(authorizedOrderSupplierIds);
+        const byPharmacy = new Map<string, Set<string>>();
+        for (const row of partnerRows ?? []) {
+          const pharmacyId = row.pharmacy_id as string;
+          const supplierId = row.supplier_id as string;
+          if (!byPharmacy.has(pharmacyId)) byPharmacy.set(pharmacyId, new Set<string>());
+          byPharmacy.get(pharmacyId)?.add(supplierId);
+        }
+        const invalidPharmacyIds = selectedPharmacyIds.filter((pharmacyId) => {
+          const partnerSet = byPharmacy.get(pharmacyId) ?? new Set<string>();
+          return !Array.from(partnerSet).some((supplierId) => authorizedSet.has(supplierId));
+        });
+        if (invalidPharmacyIds.length) {
+          const pharmacyNameById = new Map(pharmacies.map((item) => [item.id, item.name]));
+          const preview = invalidPharmacyIds.slice(0, 3).map((id) => pharmacyNameById.get(id) ?? id).join(' | ');
+          throw new Error(`Incoherence fournisseurs: certaines pharmacies n'ont aucun fournisseur partenaire autorise (${preview}).`);
+        }
+      }
+
       await updateCampaignDetails(campaignId, { name: name.trim(), supplier_id: laboratoryId, start_date: startDate, end_date: endDate });
       await upsertCampaignPhases(campaignId, phases);
+      await replaceCampaignPhaseAuthorizedSuppliers(campaignId, 'purchase_orders', authorizedOrderSupplierIds);
       setIsEditingDetails(false);
       showToast('Modifications enregistrées avec succès.');
     } catch (error) {
@@ -455,6 +497,41 @@ export const CampaignSetupPage = () => {
         return { ...phase, [field]: value || null };
       }),
     );
+  };
+
+  const setPurchaseOrdersOverIntentionsAllowed = (checked: boolean) => {
+    setPhases((current) =>
+      current.map((phase) => {
+        if (phase.phase_key !== 'purchase_orders') return phase;
+        return { ...phase, allow_higher_than_intentions: checked };
+      }),
+    );
+  };
+
+  const setPurchaseOrderPlacementMode = (mode: OrderPlacementMode) => {
+    setPhases((current) =>
+      current.map((phase) => {
+        if (phase.phase_key !== 'purchase_orders') return phase;
+        return { ...phase, order_placement_mode: mode };
+      }),
+    );
+  };
+
+  const setPurchaseOrderMultiSupplierMode = (checked: boolean) => {
+    setPhases((current) =>
+      current.map((phase) => {
+        if (phase.phase_key !== 'purchase_orders') return phase;
+        return { ...phase, multi_supplier_enabled: checked };
+      }),
+    );
+  };
+
+  const toggleAuthorizedOrderSupplier = (supplierId: string) => {
+    setAuthorizedOrderSupplierIds((current) => (
+      current.includes(supplierId)
+        ? current.filter((id) => id !== supplierId)
+        : [...current, supplierId]
+    ));
   };
 
   const showToast = (message: string) => {
@@ -1526,7 +1603,7 @@ export const CampaignSetupPage = () => {
                 <p style={{ marginTop: 0, marginBottom: 12, fontWeight: 600 }}>Phases de la campagne</p>
                 {campaignStatus === 'open' && (
                   <p style={{ margin: '0 0 12px', color: '#92400e', fontSize: 13 }}>
-                    Campagne ouverte: l&apos;activation des phases est verrouillée. Seules les limitations de période et les dates peuvent être ajustées.
+                    Campagne ouverte: l&apos;activation des phases est verrouillée. Les périodes, dates et le mode de passage des commandes BC restent ajustables.
                   </p>
                 )}
                 <div className="grid" style={{ gap: 10 }}>
@@ -1580,6 +1657,68 @@ export const CampaignSetupPage = () => {
                                 <div>
                                   <label>Date de fin</label>
                                   <Input type="date" value={phase.end_date ?? ''} onChange={(event) => setPhaseDate(phaseDefinition.key, 'end_date', event.target.value)} disabled={!isEditingDetails} />
+                                </div>
+                              </div>
+                            )}
+                            {phaseDefinition.key === 'purchase_orders' && (
+                              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e4e4e7' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                  <div>
+                                    <p style={{ margin: 0, fontWeight: 500 }}>Autoriser des quantités BC supérieures aux intentions acceptées</p>
+                                    <p style={{ margin: '4px 0 0', color: '#71717a', fontSize: 13 }}>
+                                      Si activé, la pharmacie peut dépasser les quantités d&apos;intentions validées par les admins.
+                                    </p>
+                                  </div>
+                                  <Switch
+                                    checked={phase.allow_higher_than_intentions}
+                                    disabled={!isEditingDetails}
+                                    onCheckedChange={setPurchaseOrdersOverIntentionsAllowed}
+                                  />
+                                </div>
+                                <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                                    <div>
+                                      <p style={{ margin: 0, fontWeight: 500 }}>Activer le mode multi-fournisseurs</p>
+                                      <p style={{ margin: '4px 0 0', color: '#71717a', fontSize: 13 }}>
+                                        Permet a la pharmacie de repartir les quantites par produit entre plusieurs fournisseurs.
+                                      </p>
+                                    </div>
+                                    <Switch
+                                      checked={phase.multi_supplier_enabled}
+                                      disabled={!isEditingDetails}
+                                      onCheckedChange={setPurchaseOrderMultiSupplierMode}
+                                    />
+                                  </div>
+                                  <label>Qui passe la commande ?</label>
+                                  <Select
+                                    value={phase.order_placement_mode}
+                                    disabled={!isEditingDetails}
+                                    onChange={(event) => setPurchaseOrderPlacementMode(event.target.value as OrderPlacementMode)}
+                                  >
+                                    <option value="participant_choice">Choix du participant</option>
+                                    <option value="admin_only">Administrateur exclusivement</option>
+                                    <option value="participant_only">Participant exclusivement</option>
+                                  </Select>
+                                </div>
+                                <div style={{ marginTop: 10 }}>
+                                  <p style={{ margin: '0 0 6px 0', fontWeight: 500 }}>Fournisseurs autorisés pour passer la commande</p>
+                                  <div style={{ display: 'grid', gap: 6, maxHeight: 180, overflow: 'auto', border: '1px solid #e4e4e7', borderRadius: 10, padding: 8 }}>
+                                    {allSuppliers.length === 0 && (
+                                      <p style={{ margin: 0, color: '#71717a', fontSize: 13 }}>Aucun fournisseur actif.</p>
+                                    )}
+                                    {allSuppliers.map((supplier) => {
+                                      const checked = authorizedOrderSupplierIds.includes(supplier.id);
+                                      return (
+                                        <label key={supplier.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', border: checked ? '1px solid #18181b' : '1px solid #e4e4e7', borderRadius: 8, padding: '6px 8px', background: checked ? '#fafafa' : '#fff' }}>
+                                          <span style={{ fontSize: 13 }}>{supplier.name}</span>
+                                          <Checkbox checked={checked} onCheckedChange={() => toggleAuthorizedOrderSupplier(supplier.id)} />
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                  <p style={{ margin: '6px 0 0 0', color: '#71717a', fontSize: 12 }}>
+                                    {authorizedOrderSupplierIds.length} fournisseur(s) autorisé(s).
+                                  </p>
                                 </div>
                               </div>
                             )}

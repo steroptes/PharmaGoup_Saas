@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import {
   CampaignCondition,
   CampaignPhaseKey,
+  OrderPlacementMode,
   getCampaignProductConfiguration,
   listBusinessUnitsForLaboratory,
   listCampaignBusinessUnits,
@@ -11,6 +12,7 @@ import {
   listManagedProductsForLaboratory,
 } from '@/services/campaigns';
 import { listCampaignsForPharmacyPortal, resolveCurrentUserPharmacyId } from '@/services/pharmacyCampaigns';
+import { listMyPartnerSupplierIds, listSuppliers } from '@/services/suppliers';
 
 export type CampaignDynamicProductRow = {
   product_id: string;
@@ -46,6 +48,7 @@ export type CampaignCorrectionItem = {
 };
 
 export type CampaignDynamicFormPayload = {
+  submission_id: string | null;
   campaign_id: string;
   campaign_name: string;
   phase_key: CampaignPhaseKey;
@@ -63,7 +66,36 @@ export type CampaignDynamicFormPayload = {
   prefilled_from_updated_at: string | null;
   purchase_order_prerequisite_blocked: boolean;
   purchase_order_prerequisite_message: string | null;
-  purchase_order_prerequisite_status: 'not_planned' | 'not_submitted' | 'submitted';
+  purchase_order_prerequisite_status: 'not_planned' | 'not_accepted' | 'accepted';
+  purchase_order_allow_higher_than_intentions: boolean;
+  intentions_accepted_quantities_by_product_id: Record<string, number>;
+  purchase_order_partner_suppliers: Array<{ id: string; name: string; nature: 'medicament' | 'para' | 'mixte' }>;
+  purchase_order_selected_supplier_ids: string[];
+  purchase_order_multi_supplier_enabled: boolean;
+  purchase_order_line_supplier_allocations: Record<string, Array<{ supplier_id: string; quantity: number }>>;
+  purchase_order_delegate_to_admin: boolean;
+  purchase_order_order_placement_mode: OrderPlacementMode;
+  purchase_order_authorized_supplier_ids: string[];
+  purchase_order_can_admin_place_order: boolean;
+  purchase_order_can_participant_place_order: boolean;
+  purchase_order_dispatch_history: Array<{
+    id: string;
+    supplier_id: string;
+    supplier_name: string;
+    actor_role: 'admin' | 'pharmacy_user';
+    channel: 'email' | 'sms' | 'whatsapp';
+    status: 'sent' | 'failed';
+    created_at: string;
+  }>;
+  purchase_order_has_been_dispatched: boolean;
+  purchase_order_supplier_reviews: Array<{
+    supplier_id: string;
+    supplier_name: string;
+    status: SubmissionSupplierReviewStatus;
+    admin_note: string | null;
+    correction_items: CampaignCorrectionItem[];
+    reviewed_at: string | null;
+  }>;
   admin_correction_note: string | null;
   admin_correction_items: CampaignCorrectionItem[];
 };
@@ -92,6 +124,13 @@ export type CampaignSubmissionDetail = {
   updated_at: string;
   admin_correction_note: string | null;
   reviewed_at: string | null;
+  campaign_id: string;
+  phase_key: CampaignPhaseKey;
+  purchase_order_delegate_to_admin: boolean;
+  purchase_order_order_placement_mode: OrderPlacementMode;
+  purchase_order_multi_supplier_enabled: boolean;
+  purchase_order_can_admin_place_order: boolean;
+  purchase_order_can_participant_place_order: boolean;
   admin_correction_items: CampaignCorrectionItem[];
   lines: Array<{
     product_id: string;
@@ -272,6 +311,7 @@ const loadSubmissionQuantities = async (campaignId: string, phaseKey: CampaignPh
   if (submissionError) throw new Error(submissionError.message);
   if (!submission) {
     return {
+      submissionId: null,
       quantities: new Map<string, number>(),
       status: null,
       updatedAt: null,
@@ -294,12 +334,98 @@ const loadSubmissionQuantities = async (campaignId: string, phaseKey: CampaignPh
 
   const parsedCorrection = parseCorrectionPayload(submission.admin_correction_note as string | null);
   return {
+    submissionId: submission.id as string,
     quantities,
     status: submission.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted',
     updatedAt: (submission.updated_at as string | null) ?? null,
     adminCorrectionNote: parsedCorrection.note,
     adminCorrectionItems: parsedCorrection.items,
   } as const;
+};
+
+export type SubmissionSupplierOrderSummary = {
+  supplier_id: string;
+  supplier_name: string;
+  total_ht: number;
+  total_tva: number;
+  total_ttc: number;
+  lines_count: number;
+};
+
+export type SubmissionSupplierReviewStatus = 'draft' | 'submitted' | 'needs_correction' | 'accepted';
+
+export type SubmissionSupplierReview = {
+  supplier_id: string;
+  supplier_name: string;
+  status: SubmissionSupplierReviewStatus;
+  admin_note: string | null;
+  correction_items: CampaignCorrectionItem[];
+  reviewed_at: string | null;
+};
+
+const loadAcceptedSubmissionQuantities = async (campaignId: string, phaseKey: CampaignPhaseKey, pharmacyId: string) => {
+  const { data: submission, error: submissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('id, status, updated_at')
+    .eq('campaign_id', campaignId)
+    .eq('phase_key', phaseKey)
+    .eq('pharmacy_id', pharmacyId)
+    .eq('status', 'accepted')
+    .maybeSingle();
+
+  if (submissionError) throw new Error(submissionError.message);
+  if (!submission) {
+    return {
+      submissionId: null,
+      quantities: new Map<string, number>(),
+      status: null,
+      updatedAt: null,
+    } as const;
+  }
+
+  const { data: lines, error: linesError } = await supabase
+    .from('campaign_phase_submission_lines')
+    .select('product_id, quantity')
+    .eq('submission_id', submission.id);
+
+  if (linesError) throw new Error(linesError.message);
+
+  const quantities = new Map<string, number>();
+  for (const line of lines ?? []) {
+    quantities.set(line.product_id as string, Number(line.quantity ?? 0));
+  }
+
+  return {
+    submissionId: submission.id as string,
+    quantities,
+    status: submission.status as 'accepted',
+    updatedAt: (submission.updated_at as string | null) ?? null,
+  } as const;
+};
+
+const isCampaignPhaseEnabledForPharmacy = async (campaignId: string, phaseKey: CampaignPhaseKey, pharmacyId: string) => {
+  const { data, error } = await supabase
+    .from('campaign_phases')
+    .select('is_enabled')
+    .eq('campaign_id', campaignId)
+    .eq('phase_key', phaseKey)
+    .maybeSingle();
+
+  if (!error && typeof data?.is_enabled === 'boolean') return data.is_enabled;
+
+  try {
+    const [rpcScoped, explicitScoped] = await Promise.allSettled([
+      listCampaignsForPharmacyPortal(),
+      listCampaignsForPharmacyPortal(pharmacyId),
+    ]);
+    const rows: Array<{ campaign_id: string; enabled_phases: CampaignPhaseKey[] }> = [];
+    if (rpcScoped.status === 'fulfilled') rows.push(...rpcScoped.value);
+    if (explicitScoped.status === 'fulfilled') rows.push(...explicitScoped.value);
+    const campaign = rows.find((row) => row.campaign_id === campaignId);
+    return Boolean(campaign?.enabled_phases?.includes(phaseKey));
+  } catch {
+    return false;
+  }
 };
 
 const isPermissionLikeError = (message: string) => {
@@ -332,6 +458,34 @@ const getAccessibleOpenCampaignForPharmacy = async (campaignId: string, pharmacy
     name: match.campaign_name,
     status: match.campaign_status,
     supplier_id: match.supplier_id,
+  };
+};
+
+const getPurchaseOrdersPhaseSettings = async (campaignId: string, pharmacyId: string) => {
+  const rpc = await supabase.rpc('get_purchase_orders_phase_settings_for_pharmacy', {
+    p_campaign_id: campaignId,
+    p_pharmacy_id: pharmacyId,
+  });
+  if (!rpc.error) {
+    const first = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+    return {
+      allow_higher_than_intentions: Boolean(first?.allow_higher_than_intentions),
+      order_placement_mode: ((first?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice'),
+      multi_supplier_enabled: Boolean(first?.multi_supplier_enabled),
+    };
+  }
+
+  const fallback = await supabase
+    .from('campaign_phases')
+    .select('allow_higher_than_intentions, order_placement_mode, multi_supplier_enabled')
+    .eq('campaign_id', campaignId)
+    .eq('phase_key', 'purchase_orders')
+    .maybeSingle();
+  if (fallback.error) throw new Error(`Chargement phase BC impossible: ${fallback.error.message}`);
+  return {
+    allow_higher_than_intentions: Boolean(fallback.data?.allow_higher_than_intentions),
+    order_placement_mode: ((fallback.data?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice'),
+    multi_supplier_enabled: Boolean((fallback.data as any)?.multi_supplier_enabled),
   };
 };
 
@@ -566,49 +720,144 @@ export const loadCampaignDynamicForm = async (
   await ensurePhaseEnabled(campaignId, phaseKey);
   await ensureAcceptedParticipant(campaignId, pharmacyId);
 
-  const { quantities, status, updatedAt, adminCorrectionNote, adminCorrectionItems } = await loadSubmissionQuantities(campaignId, phaseKey, pharmacyId);
+  const { submissionId, quantities, status, updatedAt, adminCorrectionNote, adminCorrectionItems } = await loadSubmissionQuantities(campaignId, phaseKey, pharmacyId);
   let initialQuantities = quantities;
   let prefilledFromPhase: CampaignPhaseKey | null = null;
   let prefilledFromStatus: 'draft' | 'submitted' | 'needs_correction' | 'accepted' | null = null;
   let prefilledFromUpdatedAt: string | null = null;
   let purchaseOrderPrerequisiteBlocked = false;
   let purchaseOrderPrerequisiteMessage: string | null = null;
-  let purchaseOrderPrerequisiteStatus: 'not_planned' | 'not_submitted' | 'submitted' = 'not_planned';
+  let purchaseOrderPrerequisiteStatus: 'not_planned' | 'not_accepted' | 'accepted' = 'not_planned';
+  let purchaseOrderAllowHigherThanIntentions = false;
+  let intentionsAcceptedQuantitiesByProductId: Record<string, number> = {};
+  let purchaseOrderPartnerSuppliers: Array<{ id: string; name: string; nature: 'medicament' | 'para' | 'mixte' }> = [];
+  let purchaseOrderSelectedSupplierIds: string[] = [];
+  let purchaseOrderMultiSupplierEnabled = false;
+  let purchaseOrderLineSupplierAllocations: Record<string, Array<{ supplier_id: string; quantity: number }>> = {};
+  let purchaseOrderDelegateToAdmin = false;
+  let purchaseOrderOrderPlacementMode: OrderPlacementMode = 'participant_choice';
+  let purchaseOrderAuthorizedSupplierIds: string[] = [];
+  let purchaseOrderCanAdminPlaceOrder = false;
+  let purchaseOrderCanParticipantPlaceOrder = false;
+  let purchaseOrderDispatchHistory: CampaignDynamicFormPayload['purchase_order_dispatch_history'] = [];
+  let purchaseOrderHasBeenDispatched = false;
+  let purchaseOrderSupplierReviews: CampaignDynamicFormPayload['purchase_order_supplier_reviews'] = [];
 
   // Purchase order can inherit latest purchase intentions lines when no PO draft exists yet.
   if (phaseKey === 'purchase_orders') {
-    const { data: intentionsPhase } = await supabase
-      .from('campaign_phases')
-      .select('is_enabled')
-      .eq('campaign_id', campaignId)
-      .eq('phase_key', 'purchase_intentions')
-      .maybeSingle();
+    const intentionsPhaseEnabled = await isCampaignPhaseEnabledForPharmacy(campaignId, 'purchase_intentions', pharmacyId);
+    const purchaseOrdersPhase = await getPurchaseOrdersPhaseSettings(campaignId, pharmacyId);
+    purchaseOrderAllowHigherThanIntentions = Boolean(purchaseOrdersPhase?.allow_higher_than_intentions);
+    purchaseOrderOrderPlacementMode = ((purchaseOrdersPhase?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice');
+    purchaseOrderMultiSupplierEnabled = Boolean(purchaseOrdersPhase?.multi_supplier_enabled);
+    purchaseOrderCanAdminPlaceOrder = purchaseOrderOrderPlacementMode !== 'participant_only';
+    purchaseOrderCanParticipantPlaceOrder = purchaseOrderOrderPlacementMode !== 'admin_only';
 
-    if (intentionsPhase?.is_enabled) {
-      const intentionsSubmission = await loadSubmissionQuantities(campaignId, 'purchase_intentions', pharmacyId);
-      purchaseOrderPrerequisiteStatus = (!intentionsSubmission.status || intentionsSubmission.status === 'draft') ? 'not_submitted' : 'submitted';
-      if (!intentionsSubmission.status || intentionsSubmission.status === 'draft') {
+    const { data: authorizedRows } = await supabase
+      .from('campaign_phase_authorized_suppliers')
+      .select('supplier_id')
+      .eq('campaign_id', campaignId)
+      .eq('phase_key', 'purchase_orders');
+    purchaseOrderAuthorizedSupplierIds = (authorizedRows ?? []).map((row) => row.supplier_id as string);
+
+    if (intentionsPhaseEnabled) {
+      const acceptedIntentionsSubmission = await loadAcceptedSubmissionQuantities(campaignId, 'purchase_intentions', pharmacyId);
+      purchaseOrderPrerequisiteStatus = acceptedIntentionsSubmission.status === 'accepted' ? 'accepted' : 'not_accepted';
+      intentionsAcceptedQuantitiesByProductId = Object.fromEntries(acceptedIntentionsSubmission.quantities.entries());
+      if (acceptedIntentionsSubmission.status !== 'accepted') {
         purchaseOrderPrerequisiteBlocked = true;
-        purchaseOrderPrerequisiteMessage = 'Soumission BC bloquee: vous devez d\'abord soumettre vos intentions d\'achat.';
+        purchaseOrderPrerequisiteMessage = 'Soumission BC bloquee: les intentions d\'achat doivent etre acceptees par les admins.';
+      }
+    }
+
+    try {
+      const [partnerIds, suppliers] = await Promise.all([
+        listMyPartnerSupplierIds(pharmacyId),
+        listSuppliers(),
+      ]);
+      const partnerSet = new Set(partnerIds);
+      const authorizedSet = new Set(purchaseOrderAuthorizedSupplierIds);
+      purchaseOrderPartnerSuppliers = suppliers
+        .filter((supplier) => supplier.is_active && partnerSet.has(supplier.id))
+        .filter((supplier) => !authorizedSet.size || authorizedSet.has(supplier.id))
+        .map((supplier) => ({ id: supplier.id, name: supplier.name, nature: supplier.nature }));
+    } catch {
+      purchaseOrderPartnerSuppliers = [];
+    }
+
+    const { data: existingSubmission } = await supabase
+      .from('campaign_phase_submissions')
+      .select('id')
+      .eq('campaign_id', campaignId)
+      .eq('phase_key', 'purchase_orders')
+      .eq('pharmacy_id', pharmacyId)
+      .maybeSingle();
+    if (existingSubmission?.id) {
+      const { data: selectedRows } = await supabase
+        .from('campaign_phase_submission_suppliers')
+        .select('supplier_id')
+        .eq('submission_id', existingSubmission.id);
+      purchaseOrderSelectedSupplierIds = (selectedRows ?? []).map((row) => row.supplier_id as string);
+      const { data: submissionMeta } = await supabase
+        .from('campaign_phase_submissions')
+        .select('delegate_order_to_admin')
+        .eq('id', existingSubmission.id)
+        .maybeSingle();
+      purchaseOrderDelegateToAdmin = Boolean(submissionMeta?.delegate_order_to_admin);
+      const { data: dispatchRows } = await supabase
+        .from('purchase_order_dispatches')
+        .select('id, supplier_id, actor_role, channel, status, created_at')
+        .eq('submission_id', existingSubmission.id)
+        .order('created_at', { ascending: false });
+      if (dispatchRows?.length) {
+        const names = new Map(purchaseOrderPartnerSuppliers.map((s) => [s.id, s.name]));
+        purchaseOrderDispatchHistory = dispatchRows.map((row) => ({
+          id: row.id as string,
+          supplier_id: row.supplier_id as string,
+          supplier_name: names.get(row.supplier_id as string) ?? 'Fournisseur',
+          actor_role: row.actor_role as 'admin' | 'pharmacy_user',
+          channel: row.channel as 'email' | 'sms' | 'whatsapp',
+          status: row.status as 'sent' | 'failed',
+          created_at: row.created_at as string,
+        }));
+        purchaseOrderHasBeenDispatched = purchaseOrderDispatchHistory.length > 0;
+      }
+      if (submissionId) {
+        try {
+          purchaseOrderSupplierReviews = await listSubmissionSupplierReviews(submissionId);
+        } catch {
+          purchaseOrderSupplierReviews = [];
+        }
+      }
+      const allocationResponse = await supabase
+        .from('campaign_phase_submission_line_suppliers')
+        .select('product_id, supplier_id, quantity')
+        .eq('submission_id', existingSubmission.id);
+      if (allocationResponse.error) {
+        throw new Error(`Chargement repartition multi-fournisseurs impossible: ${allocationResponse.error.message}`);
+      }
+      for (const row of allocationResponse.data ?? []) {
+        const productId = row.product_id as string;
+        const entry = purchaseOrderLineSupplierAllocations[productId] ?? [];
+        entry.push({
+          supplier_id: row.supplier_id as string,
+          quantity: Number(row.quantity ?? 0),
+        });
+        purchaseOrderLineSupplierAllocations[productId] = entry;
       }
     }
   }
 
   if (phaseKey === 'purchase_orders' && status === null) {
-    const { data: intentionsPhase } = await supabase
-      .from('campaign_phases')
-      .select('is_enabled')
-      .eq('campaign_id', campaignId)
-      .eq('phase_key', 'purchase_intentions')
-      .maybeSingle();
+    const intentionsPhaseEnabled = await isCampaignPhaseEnabledForPharmacy(campaignId, 'purchase_intentions', pharmacyId);
 
-    if (intentionsPhase?.is_enabled) {
-      const intentionsSubmission = await loadSubmissionQuantities(campaignId, 'purchase_intentions', pharmacyId);
-      if (intentionsSubmission.quantities.size > 0) {
-        initialQuantities = intentionsSubmission.quantities;
+    if (intentionsPhaseEnabled) {
+      const acceptedIntentionsSubmission = await loadAcceptedSubmissionQuantities(campaignId, 'purchase_intentions', pharmacyId);
+      if (acceptedIntentionsSubmission.quantities.size > 0) {
+        initialQuantities = acceptedIntentionsSubmission.quantities;
         prefilledFromPhase = 'purchase_intentions';
-        prefilledFromStatus = intentionsSubmission.status;
-        prefilledFromUpdatedAt = intentionsSubmission.updatedAt;
+        prefilledFromStatus = acceptedIntentionsSubmission.status;
+        prefilledFromUpdatedAt = acceptedIntentionsSubmission.updatedAt;
       }
     }
   }
@@ -703,6 +952,7 @@ export const loadCampaignDynamicForm = async (
   const otherPhaseConditionsCount = Math.max(0, resolvedConditions.length - filteredConditions.length);
 
   return {
+    submission_id: submissionId,
     campaign_id: campaign.id,
     campaign_name: campaign.name,
     phase_key: phaseKey,
@@ -721,6 +971,20 @@ export const loadCampaignDynamicForm = async (
     purchase_order_prerequisite_blocked: purchaseOrderPrerequisiteBlocked,
     purchase_order_prerequisite_message: purchaseOrderPrerequisiteMessage,
     purchase_order_prerequisite_status: purchaseOrderPrerequisiteStatus,
+    purchase_order_allow_higher_than_intentions: purchaseOrderAllowHigherThanIntentions,
+    intentions_accepted_quantities_by_product_id: intentionsAcceptedQuantitiesByProductId,
+    purchase_order_partner_suppliers: purchaseOrderPartnerSuppliers,
+    purchase_order_selected_supplier_ids: purchaseOrderSelectedSupplierIds,
+    purchase_order_multi_supplier_enabled: purchaseOrderMultiSupplierEnabled,
+    purchase_order_line_supplier_allocations: purchaseOrderLineSupplierAllocations,
+    purchase_order_delegate_to_admin: purchaseOrderDelegateToAdmin,
+    purchase_order_order_placement_mode: purchaseOrderOrderPlacementMode,
+    purchase_order_authorized_supplier_ids: purchaseOrderAuthorizedSupplierIds,
+    purchase_order_can_admin_place_order: purchaseOrderCanAdminPlaceOrder,
+    purchase_order_can_participant_place_order: purchaseOrderCanParticipantPlaceOrder,
+    purchase_order_dispatch_history: purchaseOrderDispatchHistory,
+    purchase_order_has_been_dispatched: purchaseOrderHasBeenDispatched,
+    purchase_order_supplier_reviews: purchaseOrderSupplierReviews,
     admin_correction_note: adminCorrectionNote,
     admin_correction_items: adminCorrectionItems,
   };
@@ -731,6 +995,9 @@ export const saveCampaignDynamicForm = async (payload: {
   phaseKey: CampaignPhaseKey;
   pharmacyId?: string | null;
   quantitiesByProductId: Record<string, number>;
+  selectedSupplierIds?: string[];
+  lineSupplierAllocationsByProductId?: Record<string, Array<{ supplier_id: string; quantity: number }>>;
+  delegateOrderToAdmin?: boolean;
   submit: boolean;
 }) => {
   const pharmacyId = payload.pharmacyId ?? await resolveCurrentUserPharmacyId();
@@ -740,7 +1007,7 @@ export const saveCampaignDynamicForm = async (payload: {
   await ensureAcceptedParticipant(payload.campaignId, pharmacyId);
   const { data: existingSubmission, error: existingSubmissionError } = await supabase
     .from('campaign_phase_submissions')
-    .select('status, admin_correction_note')
+    .select('id, status, admin_correction_note')
     .eq('campaign_id', payload.campaignId)
     .eq('phase_key', payload.phaseKey)
     .eq('pharmacy_id', pharmacyId)
@@ -783,17 +1050,101 @@ export const saveCampaignDynamicForm = async (payload: {
   });
 
   if (payload.submit) {
+    if (existingSubmission?.id && existingSubmission.status === 'needs_correction') {
+      const parsedCorrection = parseCorrectionPayload(existingSubmission.admin_correction_note as string | null);
+      const unresolvedCount = parsedCorrection.items.filter((item) => !item.resolved).length;
+      if (unresolvedCount > 0) {
+        const { data: existingLines, error: existingLinesError } = await supabase
+          .from('campaign_phase_submission_lines')
+          .select('product_id, quantity')
+          .eq('submission_id', existingSubmission.id);
+        if (existingLinesError) throw new Error(existingLinesError.message);
+
+        const previousQuantities = new Map<string, number>();
+        for (const line of existingLines ?? []) {
+          previousQuantities.set(line.product_id as string, Number(line.quantity ?? 0));
+        }
+
+        const hasAtLeastOneChange = effectiveProductIds.some((productId) => {
+          const prev = previousQuantities.get(productId) ?? 0;
+          const next = Math.max(0, Number(payload.quantitiesByProductId[productId] ?? 0));
+          return !approxEqual(prev, next);
+        });
+
+        if (!hasAtLeastOneChange) {
+          throw new Error('Resoumission rectification bloquee: aucune modification detectee sur les quantites.');
+        }
+      }
+    }
+
     if (payload.phaseKey === 'purchase_orders') {
-      const { data: intentionsPhase } = await supabase
-        .from('campaign_phases')
-        .select('is_enabled')
+      const intentionsPhaseEnabled = await isCampaignPhaseEnabledForPharmacy(payload.campaignId, 'purchase_intentions', pharmacyId);
+      const purchaseOrdersPhase = await getPurchaseOrdersPhaseSettings(payload.campaignId, pharmacyId);
+      const orderPlacementMode = ((purchaseOrdersPhase?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice');
+      const multiSupplierEnabled = Boolean(purchaseOrdersPhase?.multi_supplier_enabled);
+      if (intentionsPhaseEnabled) {
+        const acceptedIntentionsSubmission = await loadAcceptedSubmissionQuantities(payload.campaignId, 'purchase_intentions', pharmacyId);
+        if (acceptedIntentionsSubmission.status !== 'accepted') {
+          throw new Error('Soumission BC bloquee: les intentions d\'achat doivent etre acceptees avant le bon de commande.');
+        }
+        const allowHigher = Boolean(purchaseOrdersPhase?.allow_higher_than_intentions);
+        if (!allowHigher) {
+          const overLimitLines = linesPayload
+            .filter((line) => line.quantity > (acceptedIntentionsSubmission.quantities.get(line.product_id) ?? 0))
+            .map((line) => line.product_name);
+          if (overLimitLines.length) {
+            throw new Error(`Soumission BC bloquee: quantites superieures aux intentions acceptees (${overLimitLines.slice(0, 3).join(' | ')}).`);
+          }
+        }
+      }
+
+      const selectedSupplierIds = Array.from(new Set((payload.selectedSupplierIds ?? []).filter(Boolean)));
+      if (!selectedSupplierIds.length) {
+        throw new Error('Soumission BC bloquee: choisissez un fournisseur partenaire.');
+      }
+      if (!multiSupplierEnabled && selectedSupplierIds.length !== 1) {
+        throw new Error('Soumission BC bloquee: selectionnez un seul fournisseur pour cette commande.');
+      }
+      const { data: authorizedRows } = await supabase
+        .from('campaign_phase_authorized_suppliers')
+        .select('supplier_id')
         .eq('campaign_id', payload.campaignId)
-        .eq('phase_key', 'purchase_intentions')
-        .maybeSingle();
-      if (intentionsPhase?.is_enabled) {
-        const intentionsSubmission = await loadSubmissionQuantities(payload.campaignId, 'purchase_intentions', pharmacyId);
-        if (!intentionsSubmission.status || intentionsSubmission.status === 'draft') {
-          throw new Error('Soumission BC bloquee: les intentions d\'achat doivent etre soumises avant le bon de commande.');
+        .eq('phase_key', 'purchase_orders');
+      const authorizedIds = new Set((authorizedRows ?? []).map((row) => row.supplier_id as string));
+      if (authorizedIds.size > 0) {
+        const unauthorized = selectedSupplierIds.filter((supplierId) => !authorizedIds.has(supplierId));
+        if (unauthorized.length) {
+          throw new Error('Soumission BC bloquee: certains fournisseurs selectionnes ne sont pas autorises pour cette campagne.');
+        }
+      }
+      if (orderPlacementMode === 'admin_only' && !payload.delegateOrderToAdmin) {
+        throw new Error('Soumission BC bloquee: le passage de commande est reserve a l\'administrateur.');
+      }
+      if (orderPlacementMode === 'participant_only' && payload.delegateOrderToAdmin) {
+        throw new Error('Soumission BC bloquee: le passage de commande doit etre effectue par le participant.');
+      }
+
+      if (multiSupplierEnabled) {
+        const allocations = payload.lineSupplierAllocationsByProductId ?? {};
+        const selectedSet = new Set(selectedSupplierIds);
+        for (const line of linesPayload) {
+          const entries = (allocations[line.product_id] ?? [])
+            .map((entry) => ({
+              supplier_id: entry.supplier_id,
+              quantity: Math.max(0, Number(entry.quantity ?? 0)),
+            }))
+            .filter((entry) => !!entry.supplier_id && entry.quantity > 0);
+          if (!entries.length) {
+            throw new Error(`Soumission BC bloquee: repartition manquante pour ${line.product_name}.`);
+          }
+          const badSupplier = entries.find((entry) => !selectedSet.has(entry.supplier_id));
+          if (badSupplier) {
+            throw new Error(`Soumission BC bloquee: fournisseur non selectionne dans la repartition de ${line.product_name}.`);
+          }
+          const allocatedQty = entries.reduce((sum, entry) => sum + entry.quantity, 0);
+          if (!approxEqual(allocatedQty, line.quantity)) {
+            throw new Error(`Soumission BC bloquee: repartition incoherente pour ${line.product_name} (attendu ${line.quantity}, obtenu ${allocatedQty.toFixed(3)}).`);
+          }
         }
       }
     }
@@ -814,7 +1165,9 @@ export const saveCampaignDynamicForm = async (payload: {
     pharmacy_id: pharmacyId,
     status: payload.submit ? 'submitted' : (existingSubmission?.status === 'needs_correction' ? 'needs_correction' : 'draft'),
     submitted_at: payload.submit ? new Date().toISOString() : null,
-    admin_correction_note: existingSubmission?.status === 'needs_correction' ? existingSubmission.admin_correction_note ?? null : null,
+    // Preserve correction tracking until an explicit admin review decision updates it.
+    admin_correction_note: existingSubmission?.admin_correction_note ?? null,
+    delegate_order_to_admin: payload.phaseKey === 'purchase_orders' ? Boolean(payload.delegateOrderToAdmin) : false,
     total_quantity: totalQty,
     total_amount_ht: Number(totalAmount.toFixed(3)),
   };
@@ -860,6 +1213,57 @@ export const saveCampaignDynamicForm = async (payload: {
       .insert(linesPayload.map((line) => ({ ...line, submission_id: submissionId })));
     if (insertLinesError) throw new Error(insertLinesError.message);
   }
+
+  if (payload.phaseKey === 'purchase_orders') {
+    const purchaseOrdersPhase = await getPurchaseOrdersPhaseSettings(payload.campaignId, pharmacyId);
+    const multiSupplierEnabled = Boolean(purchaseOrdersPhase.multi_supplier_enabled);
+    const selectedSupplierIds = Array.from(new Set((payload.selectedSupplierIds ?? []).filter(Boolean)));
+    const { error: deleteSelectedSuppliersError } = await supabase
+      .from('campaign_phase_submission_suppliers')
+      .delete()
+      .eq('submission_id', submissionId);
+    if (deleteSelectedSuppliersError) throw new Error(deleteSelectedSuppliersError.message);
+
+    if (selectedSupplierIds.length) {
+      const { error: insertSelectedSuppliersError } = await supabase
+        .from('campaign_phase_submission_suppliers')
+        .insert(selectedSupplierIds.map((supplierId) => ({ submission_id: submissionId, supplier_id: supplierId })));
+      if (insertSelectedSuppliersError) throw new Error(insertSelectedSuppliersError.message);
+    }
+
+    const { error: deleteAllocationsError } = await supabase
+      .from('campaign_phase_submission_line_suppliers')
+      .delete()
+      .eq('submission_id', submissionId);
+    if (deleteAllocationsError && !deleteAllocationsError.message.toLowerCase().includes('campaign_phase_submission_line_suppliers')) {
+      throw new Error(deleteAllocationsError.message);
+    }
+
+    if (multiSupplierEnabled) {
+      const allocations = payload.lineSupplierAllocationsByProductId ?? {};
+      const rows = Object.entries(allocations).flatMap(([productId, entries]) =>
+        (entries ?? [])
+          .map((entry) => ({
+            product_id: productId,
+            supplier_id: entry.supplier_id,
+            quantity: Math.max(0, Number(entry.quantity ?? 0)),
+          }))
+          .filter((entry) => !!entry.supplier_id && entry.quantity > 0)
+          .map((entry) => ({
+            submission_id: submissionId,
+            product_id: entry.product_id,
+            supplier_id: entry.supplier_id,
+            quantity: Number(entry.quantity.toFixed(3)),
+          })),
+      );
+      if (rows.length) {
+        const { error: insertAllocationsError } = await supabase
+          .from('campaign_phase_submission_line_suppliers')
+          .insert(rows);
+        if (insertAllocationsError) throw new Error(insertAllocationsError.message);
+      }
+    }
+  }
 };
 
 export const listCampaignPhaseSubmissionSummaries = async (campaignId: string, phaseKey: CampaignPhaseKey): Promise<CampaignSubmissionSummary[]> => {
@@ -890,7 +1294,7 @@ export const listCampaignPhaseSubmissionSummaries = async (campaignId: string, p
 export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Promise<CampaignSubmissionDetail> => {
   const { data: submission, error: submissionError } = await supabase
     .from('campaign_phase_submissions')
-    .select('id, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at, admin_correction_note, reviewed_at')
+    .select('id, campaign_id, phase_key, pharmacy_id, status, total_quantity, total_amount_ht, submitted_at, updated_at, admin_correction_note, reviewed_at, delegate_order_to_admin')
     .eq('id', submissionId)
     .single();
 
@@ -906,10 +1310,31 @@ export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Pr
 
   if (linesError) throw new Error(linesError.message);
   const parsedCorrection = parseCorrectionPayload(submission.admin_correction_note as string | null);
+  let orderPlacementMode: OrderPlacementMode = 'participant_choice';
+  let multiSupplierEnabled = false;
+  if ((submission.phase_key as CampaignPhaseKey) === 'purchase_orders') {
+    const { data: phaseRow } = await supabase
+      .from('campaign_phases')
+      .select('order_placement_mode, multi_supplier_enabled')
+      .eq('campaign_id', submission.campaign_id as string)
+      .eq('phase_key', 'purchase_orders')
+      .maybeSingle();
+    orderPlacementMode = ((phaseRow?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice');
+    multiSupplierEnabled = Boolean((phaseRow as any)?.multi_supplier_enabled ?? false);
+  }
+  const canAdminPlace = orderPlacementMode !== 'participant_only';
+  const canParticipantPlace = orderPlacementMode !== 'admin_only';
 
   return {
     submission_id: submission.id as string,
     pharmacy_id: submission.pharmacy_id as string,
+    campaign_id: submission.campaign_id as string,
+    phase_key: submission.phase_key as CampaignPhaseKey,
+    purchase_order_delegate_to_admin: Boolean(submission.delegate_order_to_admin),
+    purchase_order_order_placement_mode: orderPlacementMode,
+    purchase_order_multi_supplier_enabled: multiSupplierEnabled,
+    purchase_order_can_admin_place_order: canAdminPlace,
+    purchase_order_can_participant_place_order: canParticipantPlace,
     pharmacy_name: names.get(submission.pharmacy_id as string) ?? 'Pharmacie non renseignee',
     status: submission.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted',
     total_quantity: Number(submission.total_quantity ?? 0),
@@ -933,15 +1358,100 @@ export const getCampaignPhaseSubmissionDetail = async (submissionId: string): Pr
 
 export const reviewCampaignPhaseSubmission = async (payload: {
   submissionId: string;
-  action: 'accept' | 'request_correction';
+  action: 'accept' | 'request_correction' | 'unfreeze';
   note?: string | null;
   correctionItems?: CampaignCorrectionItem[];
 }) => {
   const note = payload.note?.trim() ?? null;
   const correctionItems = payload.correctionItems ?? [];
+  const { data: currentSubmission, error: currentSubmissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('status, phase_key, campaign_id, pharmacy_id, admin_correction_note')
+    .eq('id', payload.submissionId)
+    .single();
+  if (currentSubmissionError) throw new Error(currentSubmissionError.message);
+
+  if (payload.action === 'accept') {
+    const parsed = parseCorrectionPayload((currentSubmission.admin_correction_note as string | null) ?? null);
+    const unresolvedCount = parsed.items.filter((item) => !item.resolved).length;
+    if (unresolvedCount > 0) {
+      throw new Error(`Acceptation impossible: ${unresolvedCount} rectification(s) reste(nt) a verifier.`);
+    }
+
+    if ((currentSubmission.phase_key as CampaignPhaseKey) === 'purchase_orders') {
+      const selectedSuppliers = await listSubmissionSelectedSuppliers(payload.submissionId);
+      if (selectedSuppliers.length > 0) {
+        const { data: reviews, error: reviewsError } = await supabase
+          .from('campaign_phase_submission_supplier_reviews')
+          .select('supplier_id, status, correction_items')
+          .eq('submission_id', payload.submissionId);
+        if (reviewsError) throw new Error(reviewsError.message);
+
+        const reviewBySupplier = new Map<string, { status: SubmissionSupplierReviewStatus; correction_items: CampaignCorrectionItem[] }>(
+          (reviews ?? []).map((row: any) => [
+            row.supplier_id as string,
+            {
+              status: (row.status as SubmissionSupplierReviewStatus) ?? 'submitted',
+              correction_items: Array.isArray(row.correction_items) ? (row.correction_items as CampaignCorrectionItem[]) : [],
+            },
+          ]),
+        );
+        const notAcceptedSuppliers = selectedSuppliers.filter((supplier) => (reviewBySupplier.get(supplier.supplier_id)?.status ?? 'submitted') !== 'accepted');
+
+        // Convenience path: in split mode with a single supplier, accept sub-BC and global BC together.
+        if (notAcceptedSuppliers.length === 1 && selectedSuppliers.length === 1) {
+          const onlySupplier = notAcceptedSuppliers[0];
+          const onlySupplierReview = reviewBySupplier.get(onlySupplier.supplier_id);
+          const unresolvedSupplier = (onlySupplierReview?.correction_items ?? []).filter((item) => !item.resolved).length;
+          if (unresolvedSupplier > 0) {
+            throw new Error(`Acceptation impossible: ${unresolvedSupplier} rectification(s) fournisseur reste(nt) a verifier.`);
+          }
+
+          const { data: currentUser } = await supabase.auth.getUser();
+          const actorUserId = currentUser.user?.id ?? null;
+          const { error: autoAcceptSupplierError } = await supabase
+            .from('campaign_phase_submission_supplier_reviews')
+            .upsert({
+              submission_id: payload.submissionId,
+              supplier_id: onlySupplier.supplier_id,
+              status: 'accepted',
+              reviewed_at: new Date().toISOString(),
+              reviewed_by: actorUserId,
+            }, {
+              onConflict: 'submission_id,supplier_id',
+            });
+          if (autoAcceptSupplierError) throw new Error(autoAcceptSupplierError.message);
+        } else if (notAcceptedSuppliers.length > 0) {
+          throw new Error('Acceptation impossible: tous les sous-BC fournisseurs doivent etre acceptes avant d accepter le BC global.');
+        }
+      }
+    }
+  }
+
+  if (payload.action === 'unfreeze' && currentSubmission.status !== 'accepted') {
+    throw new Error('Defige impossible: seule une soumission acceptee peut etre defigee.');
+  }
+  if (payload.action === 'unfreeze' && currentSubmission.phase_key === 'purchase_intentions') {
+    const { data: purchaseOrderSubmission, error: purchaseOrderSubmissionError } = await supabase
+      .from('campaign_phase_submissions')
+      .select('status')
+      .eq('campaign_id', currentSubmission.campaign_id as string)
+      .eq('pharmacy_id', currentSubmission.pharmacy_id as string)
+      .eq('phase_key', 'purchase_orders')
+      .maybeSingle();
+    if (purchaseOrderSubmissionError) throw new Error(purchaseOrderSubmissionError.message);
+
+    const purchaseOrderStatus = purchaseOrderSubmission?.status as 'draft' | 'submitted' | 'needs_correction' | 'accepted' | null | undefined;
+    if (purchaseOrderStatus === 'submitted' || purchaseOrderStatus === 'needs_correction' || purchaseOrderStatus === 'accepted') {
+      throw new Error('Defige des intentions impossible: le bon de commande de cette campagne est deja engage (soumis/rectification/accepte).');
+    }
+  }
+
   const updates = payload.action === 'accept'
     ? { status: 'accepted', admin_correction_note: note, reviewed_at: new Date().toISOString() }
-    : { status: 'needs_correction', admin_correction_note: encodeCorrectionPayload(note, correctionItems), reviewed_at: new Date().toISOString() };
+    : payload.action === 'unfreeze'
+      ? { status: 'needs_correction', admin_correction_note: note, reviewed_at: new Date().toISOString() }
+      : { status: 'needs_correction', admin_correction_note: encodeCorrectionPayload(note, correctionItems), reviewed_at: new Date().toISOString() };
 
   const { error } = await supabase
     .from('campaign_phase_submissions')
@@ -984,6 +1494,511 @@ export const saveCampaignPhaseCorrectionTracking = async (payload: {
     .eq('id', payload.submissionId);
 
   if (error) throw new Error(error.message);
+};
+
+const recomputeSubmissionStatusFromSupplierReviews = async (submissionId: string) => {
+  const { data: reviews, error: reviewsError } = await supabase
+    .from('campaign_phase_submission_supplier_reviews')
+    .select('supplier_id, status')
+    .eq('submission_id', submissionId);
+  if (reviewsError) throw new Error(reviewsError.message);
+  const selectedSuppliers = await listSubmissionSelectedSuppliers(submissionId);
+  const reviewStatusesBySupplier = new Map<string, SubmissionSupplierReviewStatus>(
+    (reviews ?? []).map((row) => [row.supplier_id as string, (row.status as SubmissionSupplierReviewStatus) ?? 'submitted']),
+  );
+  const statuses = selectedSuppliers.length
+    ? selectedSuppliers.map((supplier) => reviewStatusesBySupplier.get(supplier.supplier_id) ?? 'submitted')
+    : Array.from(reviewStatusesBySupplier.values());
+  if (!statuses.length) return;
+
+  let nextStatus: 'draft' | 'submitted' | 'needs_correction' | 'accepted' = 'submitted';
+  if (statuses.every((status) => status === 'accepted')) nextStatus = 'accepted';
+  else if (statuses.some((status) => status === 'needs_correction')) nextStatus = 'needs_correction';
+  else if (statuses.every((status) => status === 'draft')) nextStatus = 'draft';
+  else if (statuses.some((status) => status === 'accepted')) nextStatus = 'needs_correction';
+
+  const { error: updateError } = await supabase
+    .from('campaign_phase_submissions')
+    .update({ status: nextStatus, reviewed_at: new Date().toISOString() })
+    .eq('id', submissionId);
+  if (updateError) throw new Error(updateError.message);
+};
+
+export const listSubmissionSupplierReviews = async (submissionId: string): Promise<SubmissionSupplierReview[]> => {
+  const [selectedSuppliers, reviewRows] = await Promise.all([
+    listSubmissionSelectedSuppliers(submissionId),
+    supabase
+      .from('campaign_phase_submission_supplier_reviews')
+      .select('supplier_id, status, admin_note, correction_items, reviewed_at')
+      .eq('submission_id', submissionId),
+  ]);
+  if (reviewRows.error) throw new Error(reviewRows.error.message);
+
+  const reviewBySupplier = new Map(
+    (reviewRows.data ?? []).map((row) => [row.supplier_id as string, row]),
+  );
+  return selectedSuppliers.map((supplier) => {
+    const review = reviewBySupplier.get(supplier.supplier_id);
+    return {
+      supplier_id: supplier.supplier_id,
+      supplier_name: supplier.supplier_name,
+      status: (review?.status as SubmissionSupplierReviewStatus | undefined) ?? 'submitted',
+      admin_note: (review?.admin_note as string | null | undefined) ?? null,
+      correction_items: Array.isArray((review as any)?.correction_items)
+        ? ((review as any).correction_items as CampaignCorrectionItem[]).map((item) => ({
+          id: item.id ?? makeCorrectionId(),
+          scope_type: item.scope_type ?? 'campaign',
+          campaign_business_unit_id: item.campaign_business_unit_id ?? null,
+          campaign_group_brand_id: item.campaign_group_brand_id ?? null,
+          product_id: item.product_id ?? null,
+          message: item.message ?? '',
+          resolved: Boolean(item.resolved),
+          resolved_at: item.resolved_at ?? null,
+        }))
+        : [],
+      reviewed_at: (review?.reviewed_at as string | null | undefined) ?? null,
+    };
+  });
+};
+
+export const reviewSubmissionSupplierOrder = async (payload: {
+  submissionId: string;
+  supplierId: string;
+  action: 'accept' | 'request_correction' | 'reset_to_submitted';
+  note?: string | null;
+  correctionItems?: CampaignCorrectionItem[];
+}) => {
+  const { data: roleData, error: roleError } = await supabase.rpc('current_user_role');
+  if (roleError) throw new Error(roleError.message);
+  if ((roleData as string | null) !== 'admin') throw new Error('Action reservee aux administrateurs.');
+
+  const nextStatus: SubmissionSupplierReviewStatus = payload.action === 'accept'
+    ? 'accepted'
+    : payload.action === 'request_correction'
+      ? 'needs_correction'
+      : 'submitted';
+
+  const { data: currentUser } = await supabase.auth.getUser();
+  const actorUserId = currentUser.user?.id ?? null;
+
+  const correctionItems = payload.correctionItems ?? [];
+  if (payload.action === 'accept') {
+    const selectedSuppliers = await listSubmissionSelectedSuppliers(payload.submissionId);
+    const { data: submissionRow, error: submissionError } = await supabase
+      .from('campaign_phase_submissions')
+      .select('admin_correction_note')
+      .eq('id', payload.submissionId)
+      .single();
+    if (submissionError) throw new Error(submissionError.message);
+
+    const { data: currentReview } = await supabase
+      .from('campaign_phase_submission_supplier_reviews')
+      .select('correction_items, status')
+      .eq('submission_id', payload.submissionId)
+      .eq('supplier_id', payload.supplierId)
+      .maybeSingle();
+    const items = Array.isArray((currentReview as any)?.correction_items) ? ((currentReview as any).correction_items as CampaignCorrectionItem[]) : [];
+    const unresolved = items.filter((item) => !item.resolved).length;
+    if (unresolved > 0) throw new Error(`Acceptation impossible: ${unresolved} rectification(s) fournisseur reste(nt) a verifier.`);
+
+    const { data: allReviews, error: allReviewsError } = await supabase
+      .from('campaign_phase_submission_supplier_reviews')
+      .select('supplier_id, status')
+      .eq('submission_id', payload.submissionId);
+    if (allReviewsError) throw new Error(allReviewsError.message);
+    const statusBySupplier = new Map<string, SubmissionSupplierReviewStatus>(
+      (allReviews ?? []).map((row) => [row.supplier_id as string, (row.status as SubmissionSupplierReviewStatus) ?? 'submitted']),
+    );
+    statusBySupplier.set(payload.supplierId, 'accepted');
+    const remainingSuppliers = selectedSuppliers.filter((supplier) => (statusBySupplier.get(supplier.supplier_id) ?? 'submitted') !== 'accepted');
+    const isLastSupplierToAccept = remainingSuppliers.length === 0;
+    if (isLastSupplierToAccept) {
+      const globalCorrections = parseCorrectionPayload((submissionRow?.admin_correction_note as string | null) ?? null).items;
+      const unresolvedGlobal = globalCorrections.filter((item) => !item.resolved).length;
+      if (unresolvedGlobal > 0) {
+        throw new Error(`Acceptation impossible: ${unresolvedGlobal} rectification(s) generale(s) reste(nt) a verifier.`);
+      }
+    }
+  }
+
+  const { error: upsertError } = await supabase
+    .from('campaign_phase_submission_supplier_reviews')
+    .upsert({
+      submission_id: payload.submissionId,
+      supplier_id: payload.supplierId,
+      status: nextStatus,
+      admin_note: payload.note?.trim() ?? null,
+      correction_items: payload.action === 'request_correction' ? correctionItems : undefined,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: actorUserId,
+    }, {
+      onConflict: 'submission_id,supplier_id',
+    });
+  if (upsertError) throw new Error(upsertError.message);
+
+  await recomputeSubmissionStatusFromSupplierReviews(payload.submissionId);
+};
+
+export const saveSubmissionSupplierCorrectionTracking = async (payload: {
+  submissionId: string;
+  supplierId: string;
+  note?: string | null;
+  correctionItems: CampaignCorrectionItem[];
+}) => {
+  const { data: currentUser } = await supabase.auth.getUser();
+  const actorUserId = currentUser.user?.id ?? null;
+  const { error } = await supabase
+    .from('campaign_phase_submission_supplier_reviews')
+    .upsert({
+      submission_id: payload.submissionId,
+      supplier_id: payload.supplierId,
+      status: 'needs_correction',
+      admin_note: payload.note?.trim() ?? null,
+      correction_items: payload.correctionItems,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: actorUserId,
+    }, {
+      onConflict: 'submission_id,supplier_id',
+    });
+  if (error) throw new Error(error.message);
+  await recomputeSubmissionStatusFromSupplierReviews(payload.submissionId);
+};
+
+export const dispatchPurchaseOrderToSuppliers = async (payload: {
+  submissionId: string;
+  supplierIds: string[];
+  channel: 'email' | 'sms' | 'whatsapp';
+  attachment?: {
+    file_name: string;
+    mime_type: string;
+    base64: string;
+  } | null;
+}) => {
+  const supplierIds = Array.from(new Set(payload.supplierIds.filter(Boolean)));
+  if (!supplierIds.length) throw new Error('Aucun fournisseur cible.');
+
+  const { data: submission, error: submissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('id, campaign_id, pharmacy_id, phase_key, status, delegate_order_to_admin')
+    .eq('id', payload.submissionId)
+    .single();
+  if (submissionError) throw new Error(submissionError.message);
+  if ((submission.phase_key as CampaignPhaseKey) !== 'purchase_orders') throw new Error('Action reservee aux bons de commande.');
+  if ((submission.status as string) !== 'accepted') throw new Error('Envoi impossible: le BC doit etre accepte.');
+
+  const { data: phaseRow, error: phaseError } = await supabase
+    .from('campaign_phases')
+    .select('order_placement_mode')
+    .eq('campaign_id', submission.campaign_id as string)
+    .eq('phase_key', 'purchase_orders')
+    .maybeSingle();
+  if (phaseError) throw new Error(phaseError.message);
+  const orderPlacementMode = ((phaseRow?.order_placement_mode as OrderPlacementMode | null) ?? 'participant_choice');
+
+  const { data: roleData, error: roleError } = await supabase.rpc('current_user_role');
+  if (roleError) throw new Error(roleError.message);
+  const actorRole = roleData as 'admin' | 'pharmacy_user' | null;
+  if (!actorRole) throw new Error('Role utilisateur introuvable.');
+
+  const canAdmin = orderPlacementMode !== 'participant_only';
+  const canParticipant = orderPlacementMode !== 'admin_only';
+  if (actorRole === 'admin' && !canAdmin) throw new Error('Action non autorisee: passage de commande reserve au participant.');
+  if (actorRole === 'pharmacy_user' && !canParticipant) throw new Error('Action non autorisee: passage de commande reserve a l\'administrateur.');
+  if (actorRole === 'admin' && orderPlacementMode === 'participant_choice' && !Boolean(submission.delegate_order_to_admin)) {
+    throw new Error('Action non autorisee: le participant n\'a pas delegue le passage de commande.');
+  }
+
+  const { data: authorizedRows, error: authorizedError } = await supabase
+    .from('campaign_phase_authorized_suppliers')
+    .select('supplier_id')
+    .eq('campaign_id', submission.campaign_id as string)
+    .eq('phase_key', 'purchase_orders');
+  if (authorizedError) throw new Error(authorizedError.message);
+  const authorizedSet = new Set((authorizedRows ?? []).map((row) => row.supplier_id as string));
+  if (authorizedSet.size > 0) {
+    const unauthorized = supplierIds.filter((supplierId) => !authorizedSet.has(supplierId));
+    if (unauthorized.length) throw new Error('Action non autorisee: certains fournisseurs ne sont pas autorises pour cette campagne.');
+  }
+
+  const { data: selectedRows, error: selectedError } = await supabase
+    .from('campaign_phase_submission_suppliers')
+    .select('supplier_id')
+    .eq('submission_id', submission.id as string);
+  if (selectedError) throw new Error(selectedError.message);
+  const selectedSet = new Set((selectedRows ?? []).map((row) => row.supplier_id as string));
+  const notSelected = supplierIds.filter((supplierId) => !selectedSet.has(supplierId));
+  if (notSelected.length) throw new Error('Action impossible: certains fournisseurs ne sont pas associes a ce BC.');
+
+  const { data: currentUser } = await supabase.auth.getUser();
+  const actorUserId = currentUser.user?.id;
+  if (!actorUserId) throw new Error('Utilisateur non authentifie.');
+
+  const { error: insertError } = await supabase
+    .from('purchase_order_dispatches')
+    .insert(supplierIds.map((supplierId) => ({
+      submission_id: submission.id as string,
+      supplier_id: supplierId,
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+      channel: payload.channel,
+      status: 'sent',
+      payload: {
+        message: 'Dispatch enregistre depuis l\'application (provider externe non branche).',
+        attachment: payload.attachment ?? null,
+      },
+    })));
+  if (insertError) throw new Error(insertError.message);
+
+  const { error: auditError } = await supabase
+    .from('audit_logs')
+    .insert({
+      user_id: actorUserId,
+      entity_type: 'campaign_phase_submission',
+      entity_id: submission.id as string,
+      action: actorRole === 'admin' ? 'purchase_order_dispatched_by_admin' : 'purchase_order_dispatched_by_participant',
+      details: {
+        submission_id: submission.id,
+        channel: payload.channel,
+        supplier_ids: supplierIds,
+      },
+    });
+  if (auditError) {
+    // keep non-blocking
+  }
+};
+
+export const markPurchaseOrderAsPassedByAdmin = async (payload: {
+  submissionId: string;
+  supplierId: string;
+  channel: 'email' | 'sms' | 'whatsapp';
+}) => {
+  const { data: roleData, error: roleError } = await supabase.rpc('current_user_role');
+  if (roleError) throw new Error(roleError.message);
+  if ((roleData as string | null) !== 'admin') throw new Error('Action reservee aux administrateurs.');
+
+  const { data: submission, error: submissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('id, phase_key, status')
+    .eq('id', payload.submissionId)
+    .single();
+  if (submissionError) throw new Error(submissionError.message);
+  if ((submission.phase_key as CampaignPhaseKey) !== 'purchase_orders') throw new Error('Action reservee aux bons de commande.');
+  if ((submission.status as string) !== 'accepted') throw new Error('Action impossible: le BC doit etre accepte.');
+
+  const { data: selectedRows, error: selectedError } = await supabase
+    .from('campaign_phase_submission_suppliers')
+    .select('supplier_id')
+    .eq('submission_id', submission.id as string);
+  if (selectedError) throw new Error(selectedError.message);
+  const selectedSet = new Set((selectedRows ?? []).map((row) => row.supplier_id as string));
+  if (!selectedSet.has(payload.supplierId)) throw new Error('Fournisseur non associe a ce BC.');
+
+  const { data: currentUser } = await supabase.auth.getUser();
+  const actorUserId = currentUser.user?.id;
+  if (!actorUserId) throw new Error('Utilisateur non authentifie.');
+
+  const { error: insertError } = await supabase
+    .from('purchase_order_dispatches')
+    .insert({
+      submission_id: submission.id as string,
+      supplier_id: payload.supplierId,
+      actor_user_id: actorUserId,
+      actor_role: 'admin',
+      channel: payload.channel,
+      status: 'sent',
+      payload: { message: 'Commande marquee comme passee par administrateur.' },
+    });
+  if (insertError) throw new Error(insertError.message);
+};
+
+export const listSubmissionSelectedSuppliers = async (submissionId: string) => {
+  const { data, error } = await supabase
+    .from('campaign_phase_submission_suppliers')
+    .select('supplier_id, suppliers(name)')
+    .eq('submission_id', submissionId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row: any) => ({
+    supplier_id: row.supplier_id as string,
+    supplier_name: (row.suppliers?.name as string | undefined) ?? 'Fournisseur',
+  }));
+};
+
+export const buildPurchaseOrderDispatchDocument = async (payload: {
+  submissionId: string;
+  supplierId: string;
+}) => {
+  const { data: submission, error: submissionError } = await supabase
+    .from('campaign_phase_submissions')
+    .select('id, campaign_id, pharmacy_id, phase_key, submitted_at')
+    .eq('id', payload.submissionId)
+    .single();
+  if (submissionError) throw new Error(submissionError.message);
+  if ((submission.phase_key as CampaignPhaseKey) !== 'purchase_orders') throw new Error('Document reserve aux bons de commande.');
+
+  const [campaignRes, pharmacyRes, supplierRes, linesRes] = await Promise.all([
+    supabase.from('campaigns').select('name, supplier_id').eq('id', submission.campaign_id as string).maybeSingle(),
+    supabase.from('pharmacies').select('name, address, phone').eq('id', submission.pharmacy_id as string).maybeSingle(),
+    supabase.from('suppliers').select('name, address, mobile_phone, landline_phone').eq('id', payload.supplierId).maybeSingle(),
+    supabase.from('campaign_phase_submission_lines').select('product_id, product_name, quantity, unit_price_ht, line_total_ht').eq('submission_id', submission.id as string),
+  ]);
+  if (linesRes.error) throw new Error(linesRes.error.message);
+  const allocationResponse = await supabase
+    .from('campaign_phase_submission_line_suppliers')
+    .select('product_id, supplier_id, quantity')
+    .eq('submission_id', submission.id as string)
+    .eq('supplier_id', payload.supplierId);
+
+  let campaignName = (campaignRes.data?.name as string | undefined) ?? 'Campagne';
+  let campaignSupplierId = (campaignRes.data?.supplier_id as string | null | undefined) ?? null;
+  if ((!campaignRes.data || campaignRes.error) && submission.pharmacy_id) {
+    try {
+      const visibleCampaigns = await listCampaignsForPharmacyPortal(submission.pharmacy_id as string);
+      const visible = visibleCampaigns.find((row) => row.campaign_id === (submission.campaign_id as string));
+      if (visible) {
+        campaignName = visible.campaign_name;
+        campaignSupplierId = visible.supplier_id;
+      }
+    } catch {
+      // keep default values
+    }
+  }
+
+  let laboratoryLabel = 'Laboratoire';
+  const laboratoryId = campaignSupplierId;
+  if (laboratoryId) {
+    const { data: lab } = await supabase.from('laboratories').select('designation').eq('id', laboratoryId).maybeSingle();
+    if (lab?.designation) laboratoryLabel = lab.designation as string;
+    else {
+      const { data: supplierLab } = await supabase.from('suppliers').select('name').eq('id', laboratoryId).maybeSingle();
+      if (supplierLab?.name) laboratoryLabel = supplierLab.name as string;
+    }
+  }
+
+  const { data: managedProducts } = await supabase
+    .from('managed_products')
+    .select('id, nature, pct_code, barcode, vat_rate_id');
+  const vatRateIds = Array.from(new Set((managedProducts ?? []).map((row) => row.vat_rate_id as string | null).filter(Boolean) as string[]));
+  let vatRateById = new Map<string, number>();
+  if (vatRateIds.length) {
+    const { data: vatRates } = await supabase
+      .from('vat_rates')
+      .select('id, rate')
+      .in('id', vatRateIds);
+    vatRateById = new Map((vatRates ?? []).map((row) => [row.id as string, Number(row.rate ?? 0)]));
+  }
+  const vatRateByProductId = new Map<string, number>();
+  const displayCodeByProduct = new Map<string, string>();
+  for (const row of managedProducts ?? []) {
+    const productId = row.id as string;
+    const nature = (row.nature as 'medicament' | 'para' | null) ?? null;
+    const pctCode = (row.pct_code as string | null)?.trim() ?? '';
+    const barcode = (row.barcode as string | null)?.trim() ?? '';
+    const displayCode = nature === 'medicament'
+      ? (pctCode || 'N/A')
+      : (barcode || 'N/A');
+    displayCodeByProduct.set(productId, displayCode);
+    const vatRateId = row.vat_rate_id as string | null;
+    vatRateByProductId.set(productId, vatRateId ? (vatRateById.get(vatRateId) ?? 0) : 0);
+  }
+  const allocationByProductId = new Map<string, number>();
+  for (const row of allocationResponse.data ?? []) {
+    const productId = row.product_id as string;
+    allocationByProductId.set(productId, (allocationByProductId.get(productId) ?? 0) + Number(row.quantity ?? 0));
+  }
+
+  const lines = (linesRes.data ?? [])
+    .map((row) => {
+      const allocatedQuantity = allocationByProductId.get(row.product_id as string);
+      const effectiveQuantity = allocatedQuantity ?? Number(row.quantity ?? 0);
+      if (effectiveQuantity <= 0) return null;
+      const unitPrice = Number(row.unit_price_ht ?? 0);
+      const lineTotalHt = Number((unitPrice * effectiveQuantity).toFixed(3));
+      const vatRate = vatRateByProductId.get(row.product_id as string) ?? 0;
+      const lineTva = Number((lineTotalHt * vatRate / 100).toFixed(3));
+      const lineTtc = Number((lineTotalHt + lineTva).toFixed(3));
+      return {
+        product_id: row.product_id as string,
+        product_name: row.product_name as string,
+        pct_code: displayCodeByProduct.get(row.product_id as string) ?? 'N/A',
+        quantity: effectiveQuantity,
+        unit_price_ht: unitPrice,
+        vat_rate: vatRate,
+        line_total_ttc: lineTtc,
+        line_total_ht: lineTotalHt,
+        line_total_tva: lineTva,
+      };
+    })
+    .filter(Boolean)
+    .map((line) => line as {
+      product_id: string;
+      product_name: string;
+      pct_code: string;
+      quantity: number;
+      unit_price_ht: number;
+      vat_rate: number;
+      line_total_ttc: number;
+      line_total_ht: number;
+      line_total_tva: number;
+    });
+  const totalHt = lines.reduce((acc, row) => acc + row.line_total_ht, 0);
+  const totalTva = lines.reduce((acc, row) => acc + row.line_total_tva, 0);
+  const totalTtc = Number((totalHt + totalTva).toFixed(3));
+  const { data: latestDispatch } = await supabase
+    .from('purchase_order_dispatches')
+    .select('created_at, channel')
+    .eq('submission_id', submission.id as string)
+    .eq('supplier_id', payload.supplierId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    campaign_name: campaignName,
+    laboratory_name: laboratoryLabel,
+    participant: {
+      name: (pharmacyRes.data?.name as string | undefined) ?? 'Pharmacie',
+      address: (pharmacyRes.data?.address as string | null) ?? null,
+      phone: (pharmacyRes.data?.phone as string | null) ?? null,
+    },
+    supplier: {
+      name: (supplierRes.data?.name as string | undefined) ?? 'Fournisseur',
+      address: (supplierRes.data?.address as string | null) ?? null,
+      phone: (supplierRes.data?.mobile_phone as string | null) ?? (supplierRes.data?.landline_phone as string | null) ?? null,
+    },
+    submitted_at: (submission.submitted_at as string | null) ?? null,
+    lines,
+    total_ht: Number(totalHt.toFixed(3)),
+    total_tva: Number(totalTva.toFixed(3)),
+    total_ttc: totalTtc,
+    last_dispatch: latestDispatch
+      ? {
+        created_at: latestDispatch.created_at as string,
+        channel: latestDispatch.channel as 'email' | 'sms' | 'whatsapp',
+      }
+      : null,
+  };
+};
+
+export const listSubmissionSupplierOrderSummaries = async (submissionId: string): Promise<SubmissionSupplierOrderSummary[]> => {
+  const suppliers = await listSubmissionSelectedSuppliers(submissionId);
+  if (!suppliers.length) return [];
+  const docs = await Promise.all(
+    suppliers.map(async (supplier) => {
+      const doc = await buildPurchaseOrderDispatchDocument({
+        submissionId,
+        supplierId: supplier.supplier_id,
+      });
+      return {
+        supplier_id: supplier.supplier_id,
+        supplier_name: supplier.supplier_name,
+        total_ht: doc.total_ht,
+        total_tva: doc.total_tva,
+        total_ttc: doc.total_ttc,
+        lines_count: doc.lines.length,
+      } as SubmissionSupplierOrderSummary;
+    }),
+  );
+  return docs;
 };
 
 

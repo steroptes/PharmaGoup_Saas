@@ -2,12 +2,16 @@
 
 export type CampaignStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type CampaignPhaseKey = 'purchase_intentions' | 'purchase_orders' | 'delivery_notes';
+export type OrderPlacementMode = 'participant_choice' | 'admin_only' | 'participant_only';
 export type CampaignPhase = {
   phase_key: CampaignPhaseKey;
   is_enabled: boolean;
   has_period_limit: boolean;
   start_date: string | null;
   end_date: string | null;
+  allow_higher_than_intentions: boolean;
+  order_placement_mode: OrderPlacementMode;
+  multi_supplier_enabled: boolean;
 };
 export type CampaignProductArrangementMode = 'inherit_laboratory' | 'custom';
 export type CampaignScopeType = 'campaign' | 'business_unit' | 'group_brand' | 'product';
@@ -229,10 +233,24 @@ export const deleteCampaign = async (campaignId: string) => {
 export const listCampaignPhases = async (campaignId: string): Promise<CampaignPhase[]> => {
   const { data, error } = await supabase
     .from('campaign_phases')
-    .select('phase_key, is_enabled, has_period_limit, start_date, end_date')
+    .select('phase_key, is_enabled, has_period_limit, start_date, end_date, allow_higher_than_intentions, order_placement_mode, multi_supplier_enabled')
     .eq('campaign_id', campaignId);
 
-  if (error) throw new Error(formatCampaignTableError(error.message));
+  if (error) {
+    const normalized = (error.message ?? '').toLowerCase();
+    if (!normalized.includes('multi_supplier_enabled')) {
+      throw new Error(formatCampaignTableError(error.message));
+    }
+    const fallback = await supabase
+      .from('campaign_phases')
+      .select('phase_key, is_enabled, has_period_limit, start_date, end_date, allow_higher_than_intentions, order_placement_mode')
+      .eq('campaign_id', campaignId);
+    if (fallback.error) throw new Error(formatCampaignTableError(fallback.error.message));
+    return (fallback.data ?? []).map((row: any) => ({
+      ...row,
+      multi_supplier_enabled: false,
+    })) as CampaignPhase[];
+  }
 
   return (data ?? []) as CampaignPhase[];
 };
@@ -245,13 +263,70 @@ export const upsertCampaignPhases = async (campaignId: string, phases: CampaignP
     has_period_limit: phase.has_period_limit,
     start_date: phase.has_period_limit ? phase.start_date : null,
     end_date: phase.has_period_limit ? phase.end_date : null,
+    allow_higher_than_intentions: phase.phase_key === 'purchase_orders' ? phase.allow_higher_than_intentions : false,
+    order_placement_mode: phase.phase_key === 'purchase_orders' ? phase.order_placement_mode : 'participant_choice',
+    multi_supplier_enabled: phase.phase_key === 'purchase_orders' ? phase.multi_supplier_enabled : false,
   }));
 
   const { error } = await supabase.from('campaign_phases').upsert(payload, {
     onConflict: 'campaign_id,phase_key',
   });
+  if (!error) return;
 
+  const normalized = (error.message ?? '').toLowerCase();
+  if (!normalized.includes('multi_supplier_enabled')) throw new Error(formatCampaignTableError(error.message));
+
+  const fallbackPayload = phases.map((phase) => ({
+    campaign_id: campaignId,
+    phase_key: phase.phase_key,
+    is_enabled: phase.is_enabled,
+    has_period_limit: phase.has_period_limit,
+    start_date: phase.has_period_limit ? phase.start_date : null,
+    end_date: phase.has_period_limit ? phase.end_date : null,
+    allow_higher_than_intentions: phase.phase_key === 'purchase_orders' ? phase.allow_higher_than_intentions : false,
+    order_placement_mode: phase.phase_key === 'purchase_orders' ? phase.order_placement_mode : 'participant_choice',
+  }));
+  const fallback = await supabase.from('campaign_phases').upsert(fallbackPayload, {
+    onConflict: 'campaign_id,phase_key',
+  });
+  if (fallback.error) throw new Error(formatCampaignTableError(fallback.error.message));
+};
+
+export const listCampaignPhaseAuthorizedSuppliers = async (
+  campaignId: string,
+  phaseKey: CampaignPhaseKey,
+): Promise<string[]> => {
+  const { data, error } = await supabase
+    .from('campaign_phase_authorized_suppliers')
+    .select('supplier_id')
+    .eq('campaign_id', campaignId)
+    .eq('phase_key', phaseKey);
   if (error) throw new Error(formatCampaignTableError(error.message));
+  return (data ?? []).map((row) => row.supplier_id as string);
+};
+
+export const replaceCampaignPhaseAuthorizedSuppliers = async (
+  campaignId: string,
+  phaseKey: CampaignPhaseKey,
+  supplierIds: string[],
+) => {
+  const { error: deleteError } = await supabase
+    .from('campaign_phase_authorized_suppliers')
+    .delete()
+    .eq('campaign_id', campaignId)
+    .eq('phase_key', phaseKey);
+  if (deleteError) throw new Error(formatCampaignTableError(deleteError.message));
+
+  if (!supplierIds.length) return;
+  const uniqueSupplierIds = Array.from(new Set(supplierIds.filter(Boolean)));
+  const { error: insertError } = await supabase
+    .from('campaign_phase_authorized_suppliers')
+    .insert(uniqueSupplierIds.map((supplierId) => ({
+      campaign_id: campaignId,
+      phase_key: phaseKey,
+      supplier_id: supplierId,
+    })));
+  if (insertError) throw new Error(formatCampaignTableError(insertError.message));
 };
 
 export const listCampaignParticipantIds = async (campaignId: string): Promise<string[]> => {
